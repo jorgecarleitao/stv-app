@@ -1,0 +1,27 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# API
+axum = { workspace = true }
+# log
+tracing = { workspace = true }
+# serde
+serde = { workspace = true }
+
+# cors and static content
+tower-http = { workspace = true }
+
+# election
+stv-rs = "0.5.1"
+num = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+pretty_assertions = "1"
+axum-test = "17"
+test-log = {version = "0.2", features = ["trace"]}
+reqwest = {version = "*", features = ["blocking"]}
+serde_json = "*"

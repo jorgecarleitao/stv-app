@@ -1,0 +1,27 @@
+services:
+  service-db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: password
+    expose:
+      - "5432"
+    healthcheck:
+      test: pg_isready -U postgres -h localhost -d postgres
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  service:
+    build: # replace by image in your case, since the image is available on GitHub
+      context: ../
+      dockerfile: Dockerfile
+    depends_on:
+      service-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://postgres:password@service-db:5432/postgres"
+      PORT: "3000"
+    # assumes that this service is not behind a docker proxy and thus needs a port. Else, use expose
+    ports:
+      - "3000:3000"
