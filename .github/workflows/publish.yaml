@@ -1,12 +1,22 @@
-name: Publish Docker image
-
-on:
-  push:
-    branches:
-      - main
-
+name: Test and Publish image
+on: [push]
 jobs:
+  test:
+    name: Test service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+
   push_to_registry:
+    needs: test
+    if: github.ref == 'refs/heads/main'
     name: Push Docker image to GitHub
     runs-on: ubuntu-latest
     permissions:
