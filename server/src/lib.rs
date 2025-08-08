@@ -170,7 +170,7 @@ pub async fn create_app(state: AppState) -> Result<Router<()>, String> {
         .allow_headers(Any);
 
     let static_dir_path =
-        std::env::var("FRONTEND_STATIC_DIR").unwrap_or_else(|_| "static".to_string());
+        std::env::var("FRONTEND_STATIC_DIR").unwrap_or_else(|_| "app/static".to_string());
     let static_dir = tower_http::services::ServeDir::new(&static_dir_path).fallback(
         tower_http::services::ServeFile::new(format!("{static_dir_path}/index.html")),
     );
