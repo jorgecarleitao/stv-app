@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ElectionConfig {
     pub id: String,
     pub name: String,
@@ -9,15 +9,10 @@ pub struct ElectionConfig {
     pub seats: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BallotSubmission {
-    pub ranked_choices: Vec<Option<usize>>, // indices into candidates list
-}
-
 pub fn load_elections(
-    elections_dir: &str,
+    dir: &str,
 ) -> Result<HashMap<String, ElectionConfig>, Box<dyn std::error::Error>> {
-    let map: HashMap<String, ElectionConfig> = std::fs::read_dir(elections_dir)?
+    let map: HashMap<String, ElectionConfig> = std::fs::read_dir(dir)?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();

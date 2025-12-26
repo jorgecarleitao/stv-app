@@ -35,3 +35,4 @@ axum-test = "17"
 test-log = {version = "0.2", features = ["trace"]}
 reqwest = {version = "*", features = ["blocking"]}
 serde_json = "*"
+migration = { path = "./migration" }

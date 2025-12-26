@@ -2939,6 +2939,7 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-test",
+ "migration",
  "num",
  "pretty_assertions",
  "reqwest",

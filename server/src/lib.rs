@@ -1,8 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
-    routing::get,
+    routing::{get, post},
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
@@ -21,18 +20,13 @@ pub struct AppState {
     pub elections: HashMap<String, ElectionConfig>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ElectionState {
     pub election: ElectionConfig,
     pub potential_voters: usize,
     pub casted: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<counting::ElectionResult>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CastBallotRequest {
-    pub ranked_choices: Vec<Option<usize>>,
 }
 
 #[axum::debug_handler]
@@ -68,11 +62,11 @@ async fn get_election(
     let potential_voters = all_ballots.len();
 
     // Separate cast ballots (with content)
-    let ballots: Vec<election_yaml::BallotSubmission> = all_ballots
+    let ballots: Vec<counting::Ballot> = all_ballots
         .iter()
         .filter_map(|b| {
             b.ballot_content.as_ref().and_then(|content| {
-                serde_json::from_value::<election_yaml::BallotSubmission>(content.clone()).ok()
+                serde_json::from_value::<counting::Ballot>(content.clone()).ok()
             })
         })
         .collect();
@@ -81,7 +75,8 @@ async fn get_election(
 
     // Compute results if there are ballots
     let results = if casted > 0 {
-        Some(counting::compute_results(&election, &ballots).map_err(|_| error::Error::Internal)?)
+        let election = counting::to_election(&election, &ballots);
+        Some(counting::stv_droop(election).map_err(|_| error::Error::Internal)?)
     } else {
         None
     };
@@ -98,7 +93,7 @@ async fn get_election(
 async fn get_ballot(
     Path((election_id, uuid)): Path<(String, String)>,
     State(state): State<AppState>,
-) -> Result<(StatusCode, Json<Option<election_yaml::BallotSubmission>>), error::Error> {
+) -> Result<Json<Option<counting::Ballot>>, error::Error> {
     state
         .elections
         .get(&election_id)
@@ -119,24 +114,24 @@ async fn get_ballot(
         None => None,
     };
 
-    Ok((StatusCode::OK, Json(submission)))
+    Ok(Json(submission))
 }
 
 #[axum::debug_handler]
 async fn put_ballot(
     Path((election_id, uuid)): Path<(String, String)>,
     State(state): State<AppState>,
-    Json(req): Json<CastBallotRequest>,
-) -> Result<(StatusCode, Json<serde_json::Value>), error::Error> {
+    Json(ballot): Json<counting::Ballot>,
+) -> Result<Json<serde_json::Value>, error::Error> {
     // Validate election exists
     let election = state
         .elections
         .get(&election_id)
         .ok_or(error::Error::NotFound)?;
 
-    // Validate ranked_choices
-    if req
-        .ranked_choices
+    // Validate ranks
+    if ballot
+        .ranks
         .iter()
         .filter_map(|&c| c)
         .any(|c| c >= election.candidates.len())
@@ -147,9 +142,7 @@ async fn put_ballot(
     }
 
     // Store or update ballot (idempotent per uuid)
-    let ballot_json = serde_json::json!({
-        "ranked_choices": req.ranked_choices,
-    });
+    let ballot_json = serde_json::to_value(&ballot).map_err(|_| error::Error::Internal)?;
 
     if let Some(existing) = db::Entity::find_by_id(uuid.clone())
         .one(&state.db)
@@ -171,7 +164,6 @@ async fn put_ballot(
             id: sea_orm::Set(uuid),
             election_id: sea_orm::Set(election_id.clone()),
             ballot_content: sea_orm::Set(Some(ballot_json)),
-            ..Default::default()
         };
 
         ballot
@@ -179,15 +171,46 @@ async fn put_ballot(
             .await
             .map_err(|_| error::Error::Internal)?;
     }
-    Ok((StatusCode::OK, Json(serde_json::json!("null"))))
+    Ok(Json(serde_json::json!("null")))
 }
 
-pub fn create_app(db: DbConn, elections_dir: &str) -> Result<Router<()>, String> {
+#[axum::debug_handler]
+async fn simulate(
+    Json(election): Json<counting::Election>,
+) -> Result<Json<counting::ElectionResult>, error::Error> {
+    if election.candidates.is_empty() {
+        return Err(error::Error::BadRequest(
+            "Candidates list cannot be empty".to_string(),
+        ));
+    }
+    if election.seats == 0 || election.seats > election.candidates.len() {
+        return Err(error::Error::BadRequest(
+            "Invalid number of seats".to_string(),
+        ));
+    }
+    for ballot in &election.ballots {
+        for &rank in &ballot.ranks {
+            if let Some(idx) = rank {
+                if idx >= election.candidates.len() {
+                    return Err(error::Error::BadRequest(
+                        "Invalid candidate index".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    counting::stv_droop(election)
+        .map_err(|_| error::Error::Internal)
+        .map(Json)
+}
+
+pub fn create_app(db: DbConn, dir: &str) -> Result<Router<()>, String> {
     use axum::http::Method;
     use tower_http::cors::{Any, CorsLayer};
 
     // Load elections from YAML files
-    let elections = election_yaml::load_elections(elections_dir)
+    let elections = election_yaml::load_elections(dir)
         .map_err(|e| format!("Failed to load elections: {}", e))?;
 
     let state = AppState { db, elections };
@@ -206,11 +229,12 @@ pub fn create_app(db: DbConn, elections_dir: &str) -> Result<Router<()>, String>
     Ok(Router::new()
         .route("/api/health", get(health))
         .route("/api/elections", get(list_elections))
-        .route("/api/elections/:election_id", get(get_election))
+        .route("/api/elections/{election_id}", get(get_election))
         .route(
-            "/api/elections/:election_id/ballot/:uuid",
+            "/api/elections/{election_id}/ballot/{uuid}",
             get(get_ballot).put(put_ballot),
         )
+        .route("/api/simulate", post(simulate))
         .with_state(state)
         .fallback_service(static_dir)
         .layer(cors))

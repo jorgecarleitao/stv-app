@@ -1,19 +1,24 @@
 use std::collections::HashMap;
 
-use crate::election_yaml::{BallotSubmission, ElectionConfig};
+use crate::election_yaml::ElectionConfig;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ballot {
+    pub ranks: Vec<Option<usize>>, // indices into candidates list
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CombinedBallot {
     pub votes: usize,
-    pub order: Vec<Vec<usize>>,
+    pub ranks: Vec<Option<usize>>, // indices into candidates list
 }
 
 #[derive(Deserialize)]
 pub struct Election {
     pub candidates: Vec<String>,
     pub seats: usize,
-    pub ballots: Vec<Ballot>,
+    pub ballots: Vec<CombinedBallot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,22 +33,23 @@ pub struct ElectionResult {
     pub elected: Vec<Elected>,
 }
 
-fn order_to_ranks(order: &Vec<Vec<usize>>, n_candidates: usize) -> Vec<Option<usize>> {
-    let mut ranks = vec![None; n_candidates];
-    for (rank, group) in order.iter().enumerate() {
-        for &cand in group {
-            ranks[cand] = Some(rank + 1);
-        }
-    }
+fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
     ranks
+        .iter()
+        .enumerate()
+        .filter_map(|(cand, &rank)| rank.map(|r| (r, cand)))
+        .fold(vec![], |mut order, (rank, cand)| {
+            while order.len() <= rank {
+                order.push(vec![]);
+            }
+            order[rank].push(cand);
+            order
+        })
 }
 
-fn pairwise_order(ballots: &[Ballot], n_candidates: usize) -> HashMap<usize, usize> {
+fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> HashMap<usize, usize> {
     // Precompute rank arrays for each ballot
-    let ballot_ranks: Vec<Vec<Option<usize>>> = ballots
-        .iter()
-        .map(|b| order_to_ranks(&b.order, n_candidates))
-        .collect();
+    let ballot_ranks: Vec<Vec<Option<usize>>> = ballots.iter().map(|b| b.ranks.clone()).collect();
 
     let mut scores = vec![0; n_candidates];
 
@@ -89,7 +95,7 @@ fn pairwise_order(ballots: &[Ballot], n_candidates: usize) -> HashMap<usize, usi
     result
 }
 
-fn stv_droop(election: Election) -> Result<ElectionResult, String> {
+pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     use num::{BigInt, BigRational};
     use stv_rs::types::{Ballot, Candidate, Election};
 
@@ -104,7 +110,7 @@ fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     let ballots = election
         .ballots
         .iter()
-        .map(|b| Ballot::new(b.votes, b.order.clone()))
+        .map(|b| Ballot::new(b.votes, ranks_to_order(&b.ranks)))
         .collect::<Vec<_>>();
 
     let stv_election = Election::builder()
@@ -145,43 +151,21 @@ fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     })
 }
 
-pub fn compute_results(
-    election: &ElectionConfig,
-    ballots: &[BallotSubmission],
-) -> Result<ElectionResult, String> {
+pub fn to_election(election: &ElectionConfig, ballots: &[Ballot]) -> Election {
     // Aggregate ballots by their ranked_choices pattern
     let mut pattern_counts: HashMap<Vec<Option<usize>>, usize> = HashMap::new();
     for ballot in ballots {
-        *pattern_counts
-            .entry(ballot.ranked_choices.clone())
-            .or_insert(0) += 1;
+        *pattern_counts.entry(ballot.ranks.clone()).or_insert(0) += 1;
     }
 
-    // Convert aggregated patterns to Ballot format
-    let ballots: Vec<Ballot> = pattern_counts
+    let ballots: Vec<CombinedBallot> = pattern_counts
         .into_iter()
-        .map(|(ranked_choices, votes)| {
-            let order = ranked_choices
-                .iter()
-                .enumerate()
-                .filter_map(|(cand, &rank)| rank.map(|r| (r, cand)))
-                .fold(vec![], |mut order, (rank, cand)| {
-                    while order.len() <= rank {
-                        order.push(vec![]);
-                    }
-                    order[rank].push(cand);
-                    order
-                });
-
-            Ballot { votes, order }
-        })
+        .map(|(ranks, votes)| CombinedBallot { votes, ranks })
         .collect();
 
-    let election = Election {
+    Election {
         candidates: election.candidates.clone(),
         seats: election.seats,
         ballots,
-    };
-
-    stv_droop(election)
+    }
 }
