@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["server", "cli"]
+members = ["server", "cli", "server/migration"]
 
 [workspace.dependencies]
 tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }

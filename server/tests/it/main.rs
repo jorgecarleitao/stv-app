@@ -11,7 +11,7 @@ async fn state() -> AppState {
 async fn test_health() -> Result<(), String> {
     let state = state().await;
 
-    let app = create_app(state).await.unwrap();
+    let app = create_app(state).unwrap();
 
     let server = TestServer::new(app).unwrap();
 
@@ -24,7 +24,7 @@ async fn test_health() -> Result<(), String> {
 async fn test_election() -> Result<(), String> {
     let state = state().await;
 
-    let app = create_app(state).await.unwrap();
+    let app = create_app(state).unwrap();
 
     let server = TestServer::builder()
         .mock_transport() // This provides in-memory HTTP for testing and works with all Router setups

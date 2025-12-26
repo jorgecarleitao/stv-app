@@ -1,3 +1,4 @@
+use sea_orm::Database;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
@@ -10,9 +11,24 @@ async fn main() -> Result<(), String> {
         .init();
     tracing::info!("Logger initialized");
 
-    let state = AppState {};
+    // Initialize database
+    let database_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:election.db".to_string());
 
-    let app = create_app(state).await.map_err(|e| {
+    let db = Database::connect(&database_url)
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+
+    // Run migrations
+    use migration::MigratorTrait;
+    migration::Migrator::up(&db, None)
+        .await
+        .map_err(|e| format!("Failed to run migrations: {}", e))?;
+
+    // Load elections directory
+    let elections_dir = std::env::var("ELECTIONS_DIR").unwrap_or_else(|_| "elections".to_string());
+
+    let app = create_app(db, &elections_dir).map_err(|e| {
         tracing::error!("Failed to create app: {}", e);
         e
     })?;
