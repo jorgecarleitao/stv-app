@@ -7,7 +7,7 @@ use std::fs;
 use uuid::Uuid;
 
 use migration::MigratorTrait;
-use server::counting::{Elected, ElectionResult};
+use server::counting::{CombinedBallot, Elected, Election, ElectionResult};
 use server::*;
 
 fn write_temp_elections_dir() -> Result<String, String> {
@@ -162,6 +162,20 @@ ballots:
     let expected_log = "\nElection: \n\n\telection\n\tRule: Meek Parametric (omega = 1/10^6)\n\tArithmetic: exact rational arithmetic\n\tSeats: 1\n\tBallots: 19\n\tQuota: 19/2\n\tOmega: 1/1000000\n\n\tAdd eligible: Apple\n\tAdd eligible: Banana\nAction: Begin Count\n\tHopeful:  Apple (10)\n\tHopeful:  Banana (9)\n\tQuota: 19/2\n\tVotes: 19\n\tResidual: 0\n\tTotal: 19\n\tSurplus: 0\nRound 1:\nAction: Elect: Apple\n\tElected:  Apple (10)\n\tHopeful:  Banana (9)\n\tQuota: 19/2\n\tVotes: 19\n\tResidual: 0\n\tTotal: 19\n\tSurplus: 0\nAction: Iterate (elected)\n\tQuota: 19/2\n\tVotes: 19\n\tResidual: 0\n\tTotal: 19\n\tSurplus: 1/2\nAction: Defeat remaining: Banana\n\tElected:  Apple (10)\n\tDefeated: Banana (9)\n\tQuota: 19/2\n\tVotes: 19\n\tResidual: 0\n\tTotal: 19\n\tSurplus: 1/2\nAction: Count Complete\n\tElected:  Apple (19)\n\tDefeated: Banana (0)\n\tQuota: 19/2\n\tVotes: 19\n\tResidual: 0\n\tTotal: 19\n\tSurplus: 1/2\n\n";
 
     let expected_results = Some(ElectionResult {
+        election: Election {
+            candidates: vec!["Apple".to_string(), "Banana".to_string()],
+            seats: 1,
+            ballots: vec![
+                CombinedBallot {
+                    votes: 10,
+                    ranks: vec![Some(0), Some(1)],
+                },
+                CombinedBallot {
+                    votes: 9,
+                    ranks: vec![Some(1), Some(0)],
+                },
+            ],
+        },
         log: expected_log.to_string(),
         elected: vec![Elected {
             candidate: "Apple".to_string(),

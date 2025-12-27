@@ -14,7 +14,7 @@ pub struct CombinedBallot {
     pub ranks: Vec<Option<usize>>, // indices into candidates list
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Election {
     pub candidates: Vec<String>,
     pub seats: usize,
@@ -29,6 +29,7 @@ pub struct Elected {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ElectionResult {
+    pub election: Election,
     pub log: String,
     pub elected: Vec<Elected>,
 }
@@ -138,16 +139,19 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
         .elected
         .sort_by_key(|&candidate_id| order.get(&candidate_id).copied().unwrap_or(usize::MAX));
 
+    let elected = result
+        .elected
+        .into_iter()
+        .map(|e| Elected {
+            candidate: election.candidates[e].clone(),
+            id: e,
+        })
+        .collect();
+
     Ok(ElectionResult {
+        election,
         log: String::from_utf8(log).unwrap(),
-        elected: result
-            .elected
-            .into_iter()
-            .map(|e| Elected {
-                candidate: election.candidates[e].clone(),
-                id: e,
-            })
-            .collect(),
+        elected,
     })
 }
 
