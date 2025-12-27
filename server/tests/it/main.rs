@@ -96,7 +96,7 @@ async fn test_election() -> Result<(), String> {
             .map_err(|e| format!("Failed to insert ballot {}: {}", i, e))?;
     }
 
-    let app = create_app(db, elections_path).map_err(|e| e.to_string())?;
+    let app = create_app(db, elections_path.clone()).map_err(|e| e.to_string())?;
 
     let server = TestServer::builder().mock_transport().build(app).unwrap();
 
@@ -119,6 +119,40 @@ async fn test_election() -> Result<(), String> {
             .await;
         assert_eq!(resp.status_code(), 200, "failed PUT for {}", id);
     }
+
+    // Close the election by rewriting the YAML with a past end_time
+    let yaml_closed = r#"
+id: stv-test
+name: STV Test Election
+candidates:
+    - Apple
+    - Banana
+seats: 1
+start_time: 2024-01-01T00:00:00Z
+end_time: 2000-01-01T00:00:00Z
+ballots:
+    - ballot-0
+    - ballot-1
+    - ballot-2
+    - ballot-3
+    - ballot-4
+    - ballot-5
+    - ballot-6
+    - ballot-7
+    - ballot-8
+    - ballot-9
+    - ballot-10
+    - ballot-11
+    - ballot-12
+    - ballot-13
+    - ballot-14
+    - ballot-15
+    - ballot-16
+    - ballot-17
+    - ballot-18
+"#;
+    fs::write(format!("{}/stv-test.yaml", elections_path), yaml_closed)
+        .map_err(|e| format!("Failed to rewrite YAML: {}", e))?;
 
     // Fetch election results and assert exact payload (log + elected)
     let resp = server.get("/api/elections/stv-test").await;
@@ -143,9 +177,9 @@ async fn test_election() -> Result<(), String> {
             candidates: vec!["Apple".to_string(), "Banana".to_string()],
             seats: 1,
             start_time: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-            end_time: Utc.with_ymd_and_hms(2099, 12, 31, 23, 59, 59).unwrap(),
+            end_time: Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap(),
             number_of_ballots: 19,
-            ballots: None,
+            ballots: Some((0..19).map(|i| format!("ballot-{}", i)).collect()),
         },
         potential_voters: 19,
         casted: 19,
