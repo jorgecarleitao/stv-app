@@ -254,19 +254,11 @@ async fn simulate(
         .map(Json)
 }
 
-pub fn create_app(db: DbConn, dir: String) -> Result<Router<()>, String> {
+pub fn create_app(db: DbConn, elections_dir: String) -> Result<Router<()>, String> {
     use axum::http::Method;
     use tower_http::cors::{Any, CorsLayer};
 
-    // Verify the elections directory exists and is readable
-    std::fs::read_dir(&dir)
-        .map_err(|e| format!("Failed to read elections directory: {}", e))?
-        .next();
-
-    let state = AppState {
-        db,
-        elections_dir: dir,
-    };
+    let state = AppState { db, elections_dir };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
