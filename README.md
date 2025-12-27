@@ -29,9 +29,26 @@ Specifically, candidates are first selected by STV, and then their order is dete
 ## How to use
 
 ```bash
+# Quick start (data will be lost when container stops)
 docker run --rm -p 8080:8080 -e RUST_LOG=info ghcr.io/jorgecarleitao/stv-app:main
+
+# Persistent data with volume mount
+mkdir -p ./election-data
+docker run --rm -p 8080:8080 \
+  --user $(id -u):$(id -g) \
+  -e RUST_LOG=info \
+  -v ./election-data:/app/data \
+  ghcr.io/jorgecarleitao/stv-app:main
+
 # open http://localhost:8080 (or proxy TLS-terminated requests to it)
 ```
+
+### Environment Variables
+
+- `DATABASE_URL` — SQLite connection string (default in container: `sqlite:///app/data/elections.db`)
+- `ELECTIONS_DIR` — Path to directory containing election YAML files (default in container: `/app/data/elections`)
+- `RUST_LOG` — Log level (default: `info`)
+- `FRONTEND_STATIC_DIR` — Path to frontend static files (default in container: `/app/static`)
 
 ## How to develop
 
