@@ -9,7 +9,7 @@ use serde_json::json;
 pub enum Error {
     NotFound,
     BadRequest(String),
-    Internal,
+    Internal(String),
 }
 
 impl IntoResponse for Error {
@@ -21,8 +21,8 @@ impl IntoResponse for Error {
             Error::BadRequest(msg) => {
                 (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
             }
-            Error::Internal => {
-                tracing::error!("Internal server error");
+            Error::Internal(msg) => {
+                tracing::error!("Internal server error: {}", msg);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": "Internal server error" })),

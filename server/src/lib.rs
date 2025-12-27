@@ -38,8 +38,8 @@ async fn health() -> Result<(), error::Error> {
 async fn list_elections(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ElectionConfig>>, error::Error> {
-    let elections =
-        election_yaml::load_elections(&state.elections_dir).map_err(|_| error::Error::Internal)?;
+    let elections = election_yaml::load_elections(&state.elections_dir)
+        .map_err(|e| error::Error::Internal(format!("Failed to load elections: {}", e)))?;
     Ok(Json(elections.values().cloned().collect()))
 }
 
@@ -56,7 +56,12 @@ async fn get_election(
         .filter(db::Column::ElectionId.eq(election_id.clone()))
         .all(&state.db)
         .await
-        .map_err(|_| error::Error::Internal)?;
+        .map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to fetch ballots for {}: {}",
+                election_id, e
+            ))
+        })?;
 
     let potential_voters = all_ballots.len();
 
@@ -76,7 +81,9 @@ async fn get_election(
     let now = Utc::now();
     let results = if now >= election.end_time && casted > 0 {
         let election = counting::to_election(&election, &ballots);
-        Some(counting::stv_droop(election).map_err(|_| error::Error::Internal)?)
+        Some(counting::stv_droop(election).map_err(|e| {
+            error::Error::Internal(format!("STV counting failed for {}: {:?}", election_id, e))
+        })?)
     } else {
         None
     };
@@ -103,10 +110,10 @@ async fn get_ballot(
         return Err(error::Error::NotFound);
     }
 
-    let ballot = db::Entity::find_by_id(uuid)
+    let ballot = db::Entity::find_by_id(uuid.clone())
         .one(&state.db)
         .await
-        .map_err(|_| error::Error::Internal)?;
+        .map_err(|e| error::Error::Internal(format!("Failed to fetch ballot {}: {}", uuid, e)))?;
 
     let Some(ballot) = ballot else {
         return Ok(Json(None));
@@ -117,7 +124,12 @@ async fn get_ballot(
     }
 
     let submission = match ballot.ballot_content {
-        Some(content) => Some(serde_json::from_value(content).map_err(|_| error::Error::Internal)?),
+        Some(content) => Some(serde_json::from_value(content).map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to parse ballot content for {}: {}",
+                uuid, e
+            ))
+        })?),
         None => None,
     };
 
@@ -165,12 +177,22 @@ async fn put_ballot(
     }
 
     // Store or update ballot (idempotent per uuid)
-    let ballot_json = serde_json::to_value(&ballot).map_err(|_| error::Error::Internal)?;
+    let ballot_json = serde_json::to_value(&ballot).map_err(|e| {
+        error::Error::Internal(format!(
+            "Failed to serialize ballot {} for {}: {}",
+            uuid, election_id, e
+        ))
+    })?;
 
     if let Some(existing) = db::Entity::find_by_id(uuid.clone())
         .one(&state.db)
         .await
-        .map_err(|_| error::Error::Internal)?
+        .map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to query existing ballot {} for {}: {}",
+                uuid, election_id, e
+            ))
+        })?
     {
         if existing.election_id != election_id {
             return Err(error::Error::NotFound);
@@ -178,21 +200,25 @@ async fn put_ballot(
 
         let mut active: db::ActiveModel = existing.into();
         active.ballot_content = sea_orm::Set(Some(ballot_json));
-        active
-            .update(&state.db)
-            .await
-            .map_err(|_| error::Error::Internal)?;
+        active.update(&state.db).await.map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to update ballot {} for {}: {}",
+                uuid, election_id, e
+            ))
+        })?;
     } else {
         let ballot = db::ActiveModel {
-            id: sea_orm::Set(uuid),
+            id: sea_orm::Set(uuid.clone()),
             election_id: sea_orm::Set(election_id.clone()),
             ballot_content: sea_orm::Set(Some(ballot_json)),
         };
 
-        ballot
-            .insert(&state.db)
-            .await
-            .map_err(|_| error::Error::Internal)?;
+        ballot.insert(&state.db).await.map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to insert ballot {} for {}: {}",
+                uuid, election_id, e
+            ))
+        })?;
     }
     Ok(Json(serde_json::json!("null")))
 }
@@ -224,7 +250,7 @@ async fn simulate(
     }
 
     counting::stv_droop(election)
-        .map_err(|_| error::Error::Internal)
+        .map_err(|e| error::Error::Internal(format!("Simulation failed: {:?}", e)))
         .map(Json)
 }
 
