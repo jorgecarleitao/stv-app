@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, State},
     routing::{get, post},
 };
+use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 
@@ -80,7 +81,7 @@ async fn get_election(
     };
 
     Ok(Json(ElectionState {
-        election: election.into(),
+        election: election.into_public(Utc::now()),
         potential_voters,
         casted,
         results,
@@ -146,6 +147,17 @@ async fn put_ballot(
         return Err(error::Error::BadRequest(
             "Invalid candidate index".to_string(),
         ));
+    }
+
+    // Enforce voting period
+    let now = Utc::now();
+    if now < election.start_time {
+        return Err(error::Error::BadRequest(
+            "Voting has not started".to_string(),
+        ));
+    }
+    if now >= election.end_time {
+        return Err(error::Error::BadRequest("Voting has ended".to_string()));
     }
 
     // Store or update ballot (idempotent per uuid)

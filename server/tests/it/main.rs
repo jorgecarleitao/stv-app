@@ -1,4 +1,5 @@
 use axum_test::TestServer;
+use chrono::Utc;
 use sea_orm::{ConnectionTrait, Statement};
 use serde_json::json;
 use std::fs;
@@ -13,7 +14,36 @@ fn write_temp_elections_dir() -> Result<String, String> {
     let dir = std::env::temp_dir().join(format!("stv-test-{}", Uuid::new_v4()));
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    let yaml = "id: stv-test\nname: STV Test Election\ncandidates:\n  - Apple\n  - Banana\nseats: 1\nballots:\n  - ballot-0\n  - ballot-1\n  - ballot-2\n  - ballot-3\n  - ballot-4\n  - ballot-5\n  - ballot-6\n  - ballot-7\n  - ballot-8\n  - ballot-9\n  - ballot-10\n  - ballot-11\n  - ballot-12\n  - ballot-13\n  - ballot-14\n  - ballot-15\n  - ballot-16\n  - ballot-17\n  - ballot-18";
+    let yaml = r#"
+id: stv-test
+name: STV Test Election
+candidates:
+    - Apple
+    - Banana
+seats: 1
+start_time: 2024-01-01T00:00:00Z
+end_time: 2099-12-31T23:59:59Z
+ballots:
+    - ballot-0
+    - ballot-1
+    - ballot-2
+    - ballot-3
+    - ballot-4
+    - ballot-5
+    - ballot-6
+    - ballot-7
+    - ballot-8
+    - ballot-9
+    - ballot-10
+    - ballot-11
+    - ballot-12
+    - ballot-13
+    - ballot-14
+    - ballot-15
+    - ballot-16
+    - ballot-17
+    - ballot-18
+"#;
     fs::write(dir.join("stv-test.yaml"), yaml).map_err(|e| e.to_string())?;
 
     Ok(dir
@@ -105,12 +135,16 @@ async fn test_election() -> Result<(), String> {
         }],
     });
 
+    use chrono::TimeZone;
     let expected_state = ElectionState {
         election: server::election_yaml::ElectionConfig {
             id: "stv-test".to_string(),
             name: "STV Test Election".to_string(),
             candidates: vec!["Apple".to_string(), "Banana".to_string()],
             seats: 1,
+            start_time: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            end_time: Utc.with_ymd_and_hms(2099, 12, 31, 23, 59, 59).unwrap(),
+            ballots: None,
         },
         potential_voters: 19,
         casted: 19,

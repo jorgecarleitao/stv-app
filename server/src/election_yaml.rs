@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -8,6 +9,10 @@ pub struct ElectionConfig {
     pub name: String,
     pub candidates: Vec<String>,
     pub seats: usize,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ballots: Option<Vec<String>>, // populated only after election ends
 }
 
 /// ElectionConfigFile - what is stored in YAML (includes valid ballot UUIDs)
@@ -19,17 +24,28 @@ pub struct ElectionConfigFile {
     pub seats: usize,
     #[serde(default)]
     pub ballots: Vec<String>,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
 }
 
-impl From<ElectionConfigFile> for ElectionConfig {
-    fn from(config: ElectionConfigFile) -> Self {
+impl ElectionConfigFile {
+    /// Convert internal file config to public API config based on current time (consumes by value)
+    pub fn into_public(self, now: DateTime<Utc>) -> ElectionConfig {
         ElectionConfig {
-            id: config.id,
-            name: config.name,
-            candidates: config.candidates,
-            seats: config.seats,
+            id: self.id,
+            name: self.name,
+            candidates: self.candidates,
+            seats: self.seats,
+            start_time: self.start_time,
+            end_time: self.end_time,
+            ballots: is_public(self.end_time, now).then_some(self.ballots),
         }
     }
+}
+
+/// Derived visibility: election is public after `end_time`
+fn is_public(end: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    now >= end
 }
 
 /// Load a single election YAML file by ID
@@ -57,7 +73,8 @@ pub fn load_elections(
             {
                 let content = std::fs::read_to_string(&path).ok()?;
                 let config: ElectionConfigFile = serde_yaml::from_str(&content).ok()?;
-                Some((config.id.clone(), config.into()))
+                let public = config.into_public(Utc::now());
+                Some((public.id.clone(), public))
             } else {
                 None
             }
