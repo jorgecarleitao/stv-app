@@ -5,7 +5,6 @@ use axum::{
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 pub mod counting;
 pub mod db;
@@ -17,7 +16,7 @@ use election_yaml::ElectionConfig;
 #[derive(Clone)]
 pub struct AppState {
     pub db: DbConn,
-    pub elections: HashMap<String, ElectionConfig>,
+    pub elections_dir: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,7 +37,9 @@ async fn health() -> Result<(), error::Error> {
 async fn list_elections(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ElectionConfig>>, error::Error> {
-    Ok(Json(state.elections.values().cloned().collect()))
+    let elections =
+        election_yaml::load_elections(&state.elections_dir).map_err(|_| error::Error::Internal)?;
+    Ok(Json(elections.values().cloned().collect()))
 }
 
 #[axum::debug_handler]
@@ -46,11 +47,8 @@ async fn get_election(
     Path(election_id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<ElectionState>, error::Error> {
-    let election = state
-        .elections
-        .get(&election_id)
-        .ok_or(error::Error::NotFound)?
-        .clone();
+    let election = election_yaml::load_election(&state.elections_dir, &election_id)
+        .map_err(|_| error::Error::NotFound)?;
 
     // Fetch all ballots for this election (potential voters)
     let all_ballots = db::Entity::find()
@@ -82,7 +80,7 @@ async fn get_election(
     };
 
     Ok(Json(ElectionState {
-        election: election.clone(),
+        election: election.into(),
         potential_voters,
         casted,
         results,
@@ -94,10 +92,14 @@ async fn get_ballot(
     Path((election_id, uuid)): Path<(String, String)>,
     State(state): State<AppState>,
 ) -> Result<Json<Option<counting::Ballot>>, error::Error> {
-    state
-        .elections
-        .get(&election_id)
-        .ok_or(error::Error::NotFound)?;
+    // Load election to validate it exists
+    let election = election_yaml::load_election(&state.elections_dir, &election_id)
+        .map_err(|_| error::Error::NotFound)?;
+
+    // Validate ballot UUID is in the valid list
+    if !election.ballots.contains(&uuid) {
+        return Err(error::Error::NotFound);
+    }
 
     let ballot = db::Entity::find_by_id(uuid.clone())
         .one(&state.db)
@@ -123,11 +125,16 @@ async fn put_ballot(
     State(state): State<AppState>,
     Json(ballot): Json<counting::Ballot>,
 ) -> Result<Json<serde_json::Value>, error::Error> {
-    // Validate election exists
-    let election = state
-        .elections
-        .get(&election_id)
-        .ok_or(error::Error::NotFound)?;
+    // Load election and validate it exists
+    let election = election_yaml::load_election(&state.elections_dir, &election_id)
+        .map_err(|_| error::Error::NotFound)?;
+
+    // Validate ballot UUID is in the valid list
+    if !election.ballots.contains(&uuid) {
+        return Err(error::Error::BadRequest(
+            "Invalid ballot UUID for this election".to_string(),
+        ));
+    }
 
     // Validate ranks
     if ballot
@@ -205,15 +212,19 @@ async fn simulate(
         .map(Json)
 }
 
-pub fn create_app(db: DbConn, dir: &str) -> Result<Router<()>, String> {
+pub fn create_app(db: DbConn, dir: String) -> Result<Router<()>, String> {
     use axum::http::Method;
     use tower_http::cors::{Any, CorsLayer};
 
-    // Load elections from YAML files
-    let elections = election_yaml::load_elections(dir)
-        .map_err(|e| format!("Failed to load elections: {}", e))?;
+    // Verify the elections directory exists and is readable
+    std::fs::read_dir(&dir)
+        .map_err(|e| format!("Failed to read elections directory: {}", e))?
+        .next();
 
-    let state = AppState { db, elections };
+    let state = AppState {
+        db,
+        elections_dir: dir,
+    };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

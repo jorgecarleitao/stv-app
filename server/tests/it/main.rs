@@ -13,8 +13,7 @@ fn write_temp_elections_dir() -> Result<String, String> {
     let dir = std::env::temp_dir().join(format!("stv-test-{}", Uuid::new_v4()));
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    let yaml =
-        "id: stv-test\nname: STV Test Election\ncandidates:\n  - Apple\n  - Banana\nseats: 1\n";
+    let yaml = "id: stv-test\nname: STV Test Election\ncandidates:\n  - Apple\n  - Banana\nseats: 1\nballots:\n  - ballot-0\n  - ballot-1\n  - ballot-2\n  - ballot-3\n  - ballot-4\n  - ballot-5\n  - ballot-6\n  - ballot-7\n  - ballot-8\n  - ballot-9\n  - ballot-10\n  - ballot-11\n  - ballot-12\n  - ballot-13\n  - ballot-14\n  - ballot-15\n  - ballot-16\n  - ballot-17\n  - ballot-18";
     fs::write(dir.join("stv-test.yaml"), yaml).map_err(|e| e.to_string())?;
 
     Ok(dir
@@ -42,7 +41,7 @@ async fn setup_db() -> Result<(sea_orm::DbConn, String), String> {
 async fn test_health() -> Result<(), String> {
     let (db, elections_path) = setup_db().await?;
 
-    let app = create_app(db, &elections_path).map_err(|e| e.to_string())?;
+    let app = create_app(db, elections_path).map_err(|e| e.to_string())?;
 
     let server = TestServer::new(app).unwrap();
 
@@ -67,7 +66,7 @@ async fn test_election() -> Result<(), String> {
             .map_err(|e| format!("Failed to insert ballot {}: {}", i, e))?;
     }
 
-    let app = create_app(db, &elections_path).map_err(|e| e.to_string())?;
+    let app = create_app(db, elections_path).map_err(|e| e.to_string())?;
 
     let server = TestServer::builder().mock_transport().build(app).unwrap();
 
