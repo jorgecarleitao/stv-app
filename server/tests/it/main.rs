@@ -144,6 +144,7 @@ async fn test_election() -> Result<(), String> {
             seats: 1,
             start_time: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             end_time: Utc.with_ymd_and_hms(2099, 12, 31, 23, 59, 59).unwrap(),
+            number_of_ballots: 19,
             ballots: None,
         },
         potential_voters: 19,

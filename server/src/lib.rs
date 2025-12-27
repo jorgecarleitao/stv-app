@@ -72,8 +72,9 @@ async fn get_election(
 
     let casted = ballots.len();
 
-    // Compute results if there are ballots
-    let results = if casted > 0 {
+    // Only publish results after the election has ended
+    let now = Utc::now();
+    let results = if now >= election.end_time && casted > 0 {
         let election = counting::to_election(&election, &ballots);
         Some(counting::stv_droop(election).map_err(|_| error::Error::Internal)?)
     } else {
@@ -102,11 +103,14 @@ async fn get_ballot(
         return Err(error::Error::NotFound);
     }
 
-    let ballot = db::Entity::find_by_id(uuid.clone())
+    let ballot = db::Entity::find_by_id(uuid)
         .one(&state.db)
         .await
-        .map_err(|_| error::Error::Internal)?
-        .ok_or(error::Error::NotFound)?;
+        .map_err(|_| error::Error::Internal)?;
+
+    let Some(ballot) = ballot else {
+        return Ok(Json(None));
+    };
 
     if ballot.election_id != election_id {
         return Err(error::Error::NotFound);

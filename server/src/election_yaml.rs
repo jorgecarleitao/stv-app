@@ -11,6 +11,7 @@ pub struct ElectionConfig {
     pub seats: usize,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
+    pub number_of_ballots: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ballots: Option<Vec<String>>, // populated only after election ends
 }
@@ -38,6 +39,7 @@ impl ElectionConfigFile {
             seats: self.seats,
             start_time: self.start_time,
             end_time: self.end_time,
+            number_of_ballots: self.ballots.len(),
             ballots: is_public(self.end_time, now).then_some(self.ballots),
         }
     }
