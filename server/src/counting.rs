@@ -162,10 +162,12 @@ pub fn to_election(election: &ElectionConfigFile, ballots: &[Ballot]) -> Electio
         *pattern_counts.entry(ballot.ranks.clone()).or_insert(0) += 1;
     }
 
-    let ballots: Vec<CombinedBallot> = pattern_counts
+    let mut ballots: Vec<CombinedBallot> = pattern_counts
         .into_iter()
         .map(|(ranks, votes)| CombinedBallot { votes, ranks })
         .collect();
+
+    ballots.sort_by(|a, b| b.votes.cmp(&a.votes));
 
     Election {
         candidates: election.candidates.clone(),
