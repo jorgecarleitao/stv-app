@@ -100,7 +100,6 @@ fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> (HashMap<u
 }
 
 pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
-    use num::{BigInt, BigRational};
     use stv_rs::types::{Ballot, Candidate, Election};
 
     let mut log = Vec::new();
@@ -124,7 +123,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
         .ballots(ballots)
         .build();
 
-    let mut result = stv_rs::meek::stv_droop::<BigInt, BigRational>(
+    let mut result = stv_rs::meek::stv_droop::<stv_rs::arithmetic::Integer64, stv_rs::arithmetic::FixedDecimal9>(
         &mut log,
         &stv_election,
         "election",
