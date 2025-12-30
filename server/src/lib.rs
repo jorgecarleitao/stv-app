@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod counting;
 pub mod db;
+pub mod elections;
 pub mod election_yaml;
 pub mod error;
 
@@ -273,8 +274,11 @@ pub fn create_app(db: DbConn, elections_dir: String) -> Result<Router<()>, Strin
 
     Ok(Router::new()
         .route("/api/health", get(health))
-        .route("/api/elections", get(list_elections))
+        .route("/api/elections", get(list_elections).post(elections::handlers::create_election))
         .route("/api/elections/{election_id}", get(get_election))
+        .route("/api/elections/admin/{admin_uuid}", 
+            get(elections::handlers::get_election_by_admin)
+            .put(elections::handlers::update_election_by_admin))
         .route(
             "/api/elections/{election_id}/ballot/{uuid}",
             get(get_ballot).put(put_ballot),
