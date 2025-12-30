@@ -4,20 +4,34 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DbConn, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 
+pub mod ballot_tokens;
+pub mod ballots;
 pub mod counting;
-pub mod db;
-pub mod election_yaml;
+pub mod elections;
 pub mod error;
 
-use election_yaml::ElectionConfig;
+/// ElectionConfig - what gets sent to the API (no sensitive info)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ElectionConfig {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub candidates: Vec<String>,
+    pub seats: u32,
+    pub start_time: chrono::DateTime<Utc>,
+    pub end_time: chrono::DateTime<Utc>,
+    pub number_of_ballots: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ballots: Option<Vec<String>>, // Could list all ballot IDs for transparency (voter knows their UUID)
+}
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: DbConn,
-    pub elections_dir: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,39 +52,72 @@ async fn health() -> Result<(), error::Error> {
 async fn list_elections(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ElectionConfig>>, error::Error> {
-    let elections = election_yaml::load_elections(&state.elections_dir)
+    let elections = elections::Elections::find()
+        .all(&state.db)
+        .await
         .map_err(|e| error::Error::Internal(format!("Failed to load elections: {}", e)))?;
-    Ok(Json(elections.values().cloned().collect()))
+
+    let configs: Vec<ElectionConfig> = elections
+        .into_iter()
+        .map(|e| ElectionConfig {
+            id: e.uuid,
+            title: e.title,
+            description: e.description,
+            candidates: e.candidates.0,
+            seats: e.num_seats,
+            start_time: e.start_time,
+            end_time: e.end_time,
+            number_of_ballots: 0, // Would need to query tokens to get accurate count
+            ballots: None,
+        })
+        .collect();
+
+    Ok(Json(configs))
 }
 
 #[axum::debug_handler]
 async fn get_election(
-    Path(election_id): Path<String>,
+    Path(election_uuid): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<ElectionState>, error::Error> {
-    let election = election_yaml::load_election(&state.elections_dir, &election_id)
-        .map_err(|_| error::Error::NotFound)?;
+    // Load election from database
+    let election = elections::Elections::find_by_id(&election_uuid)
+        .one(&state.db)
+        .await
+        .map_err(|e| error::Error::Internal(format!("Failed to query election: {}", e)))?
+        .ok_or(error::Error::NotFound)?;
 
-    // Fetch all ballots for this election (potential voters)
-    let all_ballots = db::Entity::find()
-        .filter(db::Column::ElectionId.eq(election_id.clone()))
+    // Count ballot tokens for this election
+    let all_tokens = ballot_tokens::BallotTokens::find()
+        .filter(ballot_tokens::entity::Column::ElectionId.eq(&election_uuid))
+        .all(&state.db)
+        .await
+        .map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to fetch tokens for {}: {}",
+                election_uuid, e
+            ))
+        })?;
+
+    let potential_voters = all_tokens.len();
+
+    // Fetch all ballots for this election
+    let all_ballots = ballots::Entity::find()
+        .filter(ballots::Column::ElectionId.eq(&election_uuid))
         .all(&state.db)
         .await
         .map_err(|e| {
             error::Error::Internal(format!(
                 "Failed to fetch ballots for {}: {}",
-                election_id, e
+                election_uuid, e
             ))
         })?;
 
-    let potential_voters = all_ballots.len();
-
-    // Separate cast ballots (with content)
     let ballots: Vec<counting::Ballot> = all_ballots
         .iter()
         .filter_map(|b| {
-            b.ballot_content.as_ref().and_then(|content| {
-                serde_json::from_value::<counting::Ballot>(content.clone()).ok()
+            b.ranks.as_ref().map(|ranks| counting::Ballot {
+                ranks: ranks.0.clone(),
             })
         })
         .collect();
@@ -79,148 +126,47 @@ async fn get_election(
 
     // Only publish results after the election has ended
     let now = Utc::now();
-    let results = if now >= election.end_time && casted > 0 {
-        let election = counting::to_election(&election, &ballots);
-        Some(counting::stv_droop(election).map_err(|e| {
-            error::Error::Internal(format!("STV counting failed for {}: {:?}", election_id, e))
+    let has_ended = now >= election.end_time;
+
+    let results = if has_ended && casted > 0 {
+        let election_for_counting = counting::to_election(
+            election.candidates.0.clone(),
+            election.num_seats as usize,
+            ballots,
+        );
+        Some(counting::stv_droop(election_for_counting).map_err(|e| {
+            error::Error::Internal(format!(
+                "STV counting failed for {}: {:?}",
+                election_uuid, e
+            ))
         })?)
     } else {
         None
     };
 
+    // Convert database election to ElectionConfig format
+    let election_config = ElectionConfig {
+        id: election.uuid,
+        title: election.title,
+        description: election.description,
+        candidates: election.candidates.0.clone(),
+        seats: election.num_seats,
+        start_time: election.start_time,
+        end_time: election.end_time,
+        number_of_ballots: potential_voters,
+        ballots: if has_ended {
+            Some(all_ballots.into_iter().map(|b| b.id).collect())
+        } else {
+            None
+        },
+    };
+
     Ok(Json(ElectionState {
-        election: election.into_public(Utc::now()),
+        election: election_config,
         potential_voters,
         casted,
         results,
     }))
-}
-
-#[axum::debug_handler]
-async fn get_ballot(
-    Path((election_id, uuid)): Path<(String, String)>,
-    State(state): State<AppState>,
-) -> Result<Json<Option<counting::Ballot>>, error::Error> {
-    // Load election to validate it exists
-    let election = election_yaml::load_election(&state.elections_dir, &election_id)
-        .map_err(|_| error::Error::NotFound)?;
-
-    // Validate ballot UUID is in the valid list
-    if !election.ballots.contains(&uuid) {
-        return Err(error::Error::NotFound);
-    }
-
-    let ballot = db::Entity::find_by_id(uuid.clone())
-        .one(&state.db)
-        .await
-        .map_err(|e| error::Error::Internal(format!("Failed to fetch ballot {}: {}", uuid, e)))?;
-
-    let Some(ballot) = ballot else {
-        return Ok(Json(None));
-    };
-
-    if ballot.election_id != election_id {
-        return Err(error::Error::NotFound);
-    }
-
-    let submission = match ballot.ballot_content {
-        Some(content) => Some(serde_json::from_value(content).map_err(|e| {
-            error::Error::Internal(format!(
-                "Failed to parse ballot content for {}: {}",
-                uuid, e
-            ))
-        })?),
-        None => None,
-    };
-
-    Ok(Json(submission))
-}
-
-#[axum::debug_handler]
-async fn put_ballot(
-    Path((election_id, uuid)): Path<(String, String)>,
-    State(state): State<AppState>,
-    Json(ballot): Json<counting::Ballot>,
-) -> Result<Json<serde_json::Value>, error::Error> {
-    // Load election and validate it exists
-    let election = election_yaml::load_election(&state.elections_dir, &election_id)
-        .map_err(|_| error::Error::NotFound)?;
-
-    // Validate ballot UUID is in the valid list
-    if !election.ballots.contains(&uuid) {
-        return Err(error::Error::BadRequest(
-            "Invalid ballot UUID for this election".to_string(),
-        ));
-    }
-
-    // Validate ranks
-    if ballot
-        .ranks
-        .iter()
-        .filter_map(|&c| c)
-        .any(|c| c >= election.candidates.len())
-    {
-        return Err(error::Error::BadRequest(
-            "Invalid candidate index".to_string(),
-        ));
-    }
-
-    // Enforce voting period
-    let now = Utc::now();
-    if now < election.start_time {
-        return Err(error::Error::BadRequest(
-            "Voting has not started".to_string(),
-        ));
-    }
-    if now >= election.end_time {
-        return Err(error::Error::BadRequest("Voting has ended".to_string()));
-    }
-
-    // Store or update ballot (idempotent per uuid)
-    let ballot_json = serde_json::to_value(&ballot).map_err(|e| {
-        error::Error::Internal(format!(
-            "Failed to serialize ballot {} for {}: {}",
-            uuid, election_id, e
-        ))
-    })?;
-
-    if let Some(existing) = db::Entity::find_by_id(uuid.clone())
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            error::Error::Internal(format!(
-                "Failed to query existing ballot {} for {}: {}",
-                uuid, election_id, e
-            ))
-        })?
-    {
-        if existing.election_id != election_id {
-            return Err(error::Error::NotFound);
-        }
-
-        let mut active: db::ActiveModel = existing.into();
-        active.ballot_content = sea_orm::Set(Some(ballot_json));
-        active.update(&state.db).await.map_err(|e| {
-            error::Error::Internal(format!(
-                "Failed to update ballot {} for {}: {}",
-                uuid, election_id, e
-            ))
-        })?;
-    } else {
-        let ballot = db::ActiveModel {
-            id: sea_orm::Set(uuid.clone()),
-            election_id: sea_orm::Set(election_id.clone()),
-            ballot_content: sea_orm::Set(Some(ballot_json)),
-        };
-
-        ballot.insert(&state.db).await.map_err(|e| {
-            error::Error::Internal(format!(
-                "Failed to insert ballot {} for {}: {}",
-                uuid, election_id, e
-            ))
-        })?;
-    }
-    Ok(Json(serde_json::json!("null")))
 }
 
 #[axum::debug_handler]
@@ -254,11 +200,11 @@ async fn simulate(
         .map(Json)
 }
 
-pub fn create_app(db: DbConn, elections_dir: String) -> Result<Router<()>, String> {
+pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
     use axum::http::Method;
     use tower_http::cors::{Any, CorsLayer};
 
-    let state = AppState { db, elections_dir };
+    let state = AppState { db };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -271,14 +217,43 @@ pub fn create_app(db: DbConn, elections_dir: String) -> Result<Router<()>, Strin
         tower_http::services::ServeFile::new(format!("{static_dir_path}/index.html")),
     );
 
+    // Election routes nested under /api/elections
+    let elections_router = Router::new()
+        .route(
+            "/",
+            get(list_elections).post(elections::handlers::create_election),
+        )
+        .route("/{election_id}", get(get_election))
+        .route(
+            "/{election_id}/admin/{admin_uuid}",
+            get(elections::handlers::get_election_by_admin)
+                .put(elections::handlers::update_election_by_admin),
+        )
+        .route(
+            "/{election_id}/ballots",
+            get(ballots::handlers::get_ballots_by_election),
+        )
+        .route(
+            "/{election_id}/ballot/{uuid}",
+            get(ballots::handlers::get_ballot).put(ballots::handlers::put_ballot),
+        )
+        .route(
+            "/{election_id}/admin/{admin_uuid}/tokens",
+            get(ballot_tokens::handlers::get_ballot_tokens)
+                .post(ballot_tokens::handlers::create_ballot_tokens),
+        )
+        .route(
+            "/{election_id}/tokens/{token_id}",
+            get(ballot_tokens::handlers::get_token_info),
+        )
+        .route(
+            "/{election_id}/tokens/{token_id}/redeem",
+            post(ballot_tokens::handlers::redeem_token),
+        );
+
     Ok(Router::new()
         .route("/api/health", get(health))
-        .route("/api/elections", get(list_elections))
-        .route("/api/elections/{election_id}", get(get_election))
-        .route(
-            "/api/elections/{election_id}/ballot/{uuid}",
-            get(get_ballot).put(put_ballot),
-        )
+        .nest("/api/elections", elections_router)
         .route("/api/simulate", post(simulate))
         .with_state(state)
         .fallback_service(static_dir)

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::election_yaml::ElectionConfigFile;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +31,8 @@ pub struct ElectionResult {
     pub election: Election,
     pub log: String,
     pub elected: Vec<Elected>,
+    pub order: HashMap<usize, usize>, // Map from candidate ID to order position
+    pub pairwise_matrix: Vec<Vec<usize>>, // n×n matrix of pairwise comparisons
 }
 
 fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
@@ -48,11 +49,12 @@ fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
         })
 }
 
-fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> HashMap<usize, usize> {
+fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> (HashMap<usize, usize>, Vec<Vec<usize>>) {
     // Precompute rank arrays for each ballot
     let ballot_ranks: Vec<Vec<Option<usize>>> = ballots.iter().map(|b| b.ranks.clone()).collect();
 
     let mut scores = vec![0; n_candidates];
+    let mut matrix = vec![vec![0; n_candidates]; n_candidates];
 
     for i in 0..n_candidates {
         for j in 0..n_candidates {
@@ -78,6 +80,7 @@ fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> HashMap<us
                 }
                 // both None = tie, ignore
             }
+            matrix[i][j] = i_beats_j_total;
             if i_beats_j_total > j_beats_i_total {
                 scores[i] += 1;
             }
@@ -93,7 +96,7 @@ fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> HashMap<us
     for (order, cand) in idxs.into_iter().enumerate() {
         result.insert(cand, order);
     }
-    result
+    (result, matrix)
 }
 
 pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
@@ -134,7 +137,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     )
     .unwrap();
 
-    let order = pairwise_order(&election.ballots, election.candidates.len());
+    let (order, pairwise_matrix) = pairwise_order(&election.ballots, election.candidates.len());
     result
         .elected
         .sort_by_key(|&candidate_id| order.get(&candidate_id).copied().unwrap_or(usize::MAX));
@@ -152,14 +155,16 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
         election,
         log: String::from_utf8(log).unwrap(),
         elected,
+        order,
+        pairwise_matrix,
     })
 }
 
-pub fn to_election(election: &ElectionConfigFile, ballots: &[Ballot]) -> Election {
+pub fn to_election(candidates: Vec<String>, seats: usize, ballots: Vec<Ballot>) -> Election {
     // Aggregate ballots by their ranked_choices pattern
     let mut pattern_counts: HashMap<Vec<Option<usize>>, usize> = HashMap::new();
     for ballot in ballots {
-        *pattern_counts.entry(ballot.ranks.clone()).or_insert(0) += 1;
+        *pattern_counts.entry(ballot.ranks).or_insert(0) += 1;
     }
 
     let mut ballots: Vec<CombinedBallot> = pattern_counts
@@ -170,8 +175,8 @@ pub fn to_election(election: &ElectionConfigFile, ballots: &[Ballot]) -> Electio
     ballots.sort_by(|a, b| b.votes.cmp(&a.votes));
 
     Election {
-        candidates: election.candidates.clone(),
-        seats: election.seats,
+        candidates: candidates.to_vec(),
+        seats,
         ballots,
     }
 }
