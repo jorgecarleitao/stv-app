@@ -35,7 +35,6 @@ WORKDIR /app/data
 
 # Set default environment variables
 ENV DATABASE_URL="sqlite:///app/data/elections.db?mode=rwc"
-ENV ELECTIONS_DIR="/app/data/elections"
 ENV FRONTEND_STATIC_DIR="/app/static"
 
 EXPOSE 8080
