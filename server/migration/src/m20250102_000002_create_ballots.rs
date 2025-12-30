@@ -6,12 +6,6 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Drop the old ballots table
-        manager
-            .get_connection()
-            .execute_unprepared("DROP TABLE IF EXISTS ballots")
-            .await?;
-
         // Create new ballots table with foreign key to elections
         manager
             .get_connection()
