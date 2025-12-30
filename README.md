@@ -1,32 +1,51 @@
-# STV election app
+# STV Election App
 
-This repo contains a docker image with a website to tally elections using STV.
+This project provides a complete platform for running, managing, and explaining Single Transferable Vote (STV) elections. It supports the full election lifecycle: setup, secure ballot distribution, voting, tallying, and transparent result explanation.
 
-## What it does
+## Features
 
-![alt text](image.png)
+- **Full Election Workflow:**
+  - Create and configure elections (candidates, seats, descriptions, start/end times)
+  - Generate and manage unique ballot tokens for secure, auditable voting
+  - Distribute tokens to voters; tokens can only be redeemed while the election is open
+  - Voters use tokens to access their ballot and submit ranked preferences
+  - Ballots are anonymized upon submission (token-voter link is erased)
+  - Results are computed and published after the election closes
 
-This website runs the Single Transferable Vote (STV) using Meek's method using Droop quota, a precise and widely recognized algorithm for proportional ranked-choice elections.
-This is the same type of method used in various real-world governmental and organizational elections.
+- **Advanced Tallying and Explanation:**
+  - Uses Meek's method for STV with Droop quota ([reference](https://prfound.org/2020/05/droop-python-3/)), matching real-world proportional elections
+  - Elected candidates are further ordered using [Copeland's method](https://en.wikipedia.org/wiki/Copeland%27s_method) for ranking them
+  - Exposes both the Copeland order and the full pairwise comparison matrix for transparency
+  - Frontend displays detailed results, including matrix, order, and individual ballots, for auditability
 
-Main features:
+- **Modern Web UI:**
+  - Election setup, admin, and voting flows
+  - Ballot group management, foldable UI, and localized demo data (Portuguese/English)
+  - Shareable election configuration via URL or YAML
 
-* Candidates are selected (un-ordered) by STV that reproduces [droop.py, the reference implementation of STV](https://prfound.org/2020/05/droop-python-3/);
-* Elected candidates are ordered via [Copeland's method](https://en.wikipedia.org/wiki/Copeland%27s_method);
-* Frontend allows configuring the election (candidates, ballots);
-* Configuration is stored in the url and can be shared;
-* Configuration can be loaded and exported to yaml, a human and computer readable format.
+- **Security and Integrity:**
+  - Ballot tokens cannot be redeemed after the election closes
+  - All critical actions (token creation, ballot submission) are auditable
+  - Data can be persisted via Docker volume
 
-## How it does
+## How It Works
 
-The underlying algorithm is implemented in open source by [Guillaume Endignoux](https://gendignoux.com/), an engineer at Google.
-It can be found [here](https://github.com/gendx/stv-rs) and explained [here](https://gendignoux.com/blog/2023/03/27/single-transferable-vote.html).
+The backend is written in Rust, using Axum and SeaORM, and implements:
 
-By default, STV selects a set of winners, but does not provide a strict ranking of those elected.
-To provide a podium-style order, this website augments the STV results by ranking the elected candidates using [Copeland's method](https://en.wikipedia.org/wiki/Copeland%27s_method), a well-known approach based on pairwise comparison of preferences across all ballots.
-Specifically, candidates are first selected by STV, and then their order is determined according to voter preferences using Copeland's method.
+- Election and ballot token management
+- Secure, auditable voting (tokens, anonymization)
+- STV tallying (Meek's method, Droop quota)
+- Copeland pairwise ordering and matrix computation
+- REST API for frontend and automation
 
-## How to use
+The frontend (see `stv-app-frontend/`) is a modern React app for election setup, admin, and voting.
+
+### Technical Details
+
+- [STV algorithm implementation](https://github.com/gendx/stv-rs) by Guillaume Endignoux ([explanation](https://gendignoux.com/blog/2023/03/27/single-transferable-vote.html))
+- Results include both the set of elected candidates and their order, plus a full pairwise matrix for transparency
+
+## Quick Start
 
 ```bash
 # Quick start (data will be lost when container stops)
@@ -46,14 +65,13 @@ docker run --rm -p 8080:8080 \
 ### Environment Variables
 
 - `DATABASE_URL` — SQLite connection string (default in container: `sqlite:///app/data/elections.db`)
-- `ELECTIONS_DIR` — Path to directory containing election YAML files (default in container: `/app/data/elections`)
 - `RUST_LOG` — Log level (default: `info`)
 - `FRONTEND_STATIC_DIR` — Path to frontend static files (default in container: `/app/static`)
 
-## How to develop
+## Development
 
 ```bash
 cargo test
-RUST_LOG=info cargo run
+RUST_LOG=info DATABASE_URL="sqlite:election-data/elections.db?mode=rwc" cargo run --bin cli
 docker build -t test .
 ```
