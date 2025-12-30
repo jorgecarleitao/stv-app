@@ -16,17 +16,15 @@ impl MigrationTrait for Migration {
                     description TEXT,
                     candidates JSON,
                     num_seats INTEGER NOT NULL,
-                    start_time TIMESTAMP,
-                    end_time TIMESTAMP
+                    start_time TIMESTAMP NOT NULL,
+                    end_time TIMESTAMP NOT NULL
                 )",
             )
             .await?;
 
         manager
             .get_connection()
-            .execute_unprepared(
-                "CREATE INDEX idx_elections_admin_uuid ON elections(admin_uuid)",
-            )
+            .execute_unprepared("CREATE INDEX idx_elections_admin_uuid ON elections(admin_uuid)")
             .await?;
 
         Ok(())
@@ -41,4 +39,3 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 }
-

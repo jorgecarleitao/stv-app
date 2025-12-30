@@ -25,10 +25,7 @@ async fn main() -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to run migrations: {}", e))?;
 
-    // Load elections directory
-    let elections_dir = std::env::var("ELECTIONS_DIR").unwrap_or_else(|_| "elections".to_string());
-
-    let app = create_app(db, elections_dir).map_err(|e| {
+    let app = create_app(db).map_err(|e| {
         tracing::error!("Failed to create app: {}", e);
         e
     })?;

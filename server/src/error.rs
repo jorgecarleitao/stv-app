@@ -12,6 +12,22 @@ pub enum Error {
     Internal(String),
 }
 
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::NotFound => write!(f, "Not found"),
+            Error::BadRequest(msg) => write!(f, "Bad request: {}", msg),
+            Error::Internal(msg) => write!(f, "Internal error: {}", msg),
+        }
+    }
+}
+
+impl<E: std::fmt::Display + std::fmt::Debug> From<sea_orm::TransactionError<E>> for Error {
+    fn from(err: sea_orm::TransactionError<E>) -> Self {
+        Error::Internal(format!("Transaction failed: {}", err))
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         match self {

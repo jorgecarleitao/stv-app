@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::election_yaml::ElectionConfigFile;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,11 +154,11 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     })
 }
 
-pub fn to_election(election: &ElectionConfigFile, ballots: &[Ballot]) -> Election {
+pub fn to_election(candidates: Vec<String>, seats: usize, ballots: Vec<Ballot>) -> Election {
     // Aggregate ballots by their ranked_choices pattern
     let mut pattern_counts: HashMap<Vec<Option<usize>>, usize> = HashMap::new();
     for ballot in ballots {
-        *pattern_counts.entry(ballot.ranks.clone()).or_insert(0) += 1;
+        *pattern_counts.entry(ballot.ranks).or_insert(0) += 1;
     }
 
     let mut ballots: Vec<CombinedBallot> = pattern_counts
@@ -170,8 +169,8 @@ pub fn to_election(election: &ElectionConfigFile, ballots: &[Ballot]) -> Electio
     ballots.sort_by(|a, b| b.votes.cmp(&a.votes));
 
     Election {
-        candidates: election.candidates.clone(),
-        seats: election.seats,
+        candidates: candidates.to_vec(),
+        seats,
         ballots,
     }
 }
