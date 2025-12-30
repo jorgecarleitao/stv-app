@@ -89,11 +89,24 @@ pub async fn redeem_token(
     Path((election_id, token_id)): Path<(String, String)>,
 ) -> Result<Json<String>, Error> {
     use sea_orm::{DbErr, TransactionTrait};
+    use chrono::Utc;
 
     let ballot_id = state
         .db
         .transaction::<_, String, DbErr>(|txn| {
             Box::pin(async move {
+                // Fetch the election to check end_time inside the transaction
+                let election = crate::elections::Elections::find()
+                    .filter(crate::elections::entity::Column::Uuid.eq(&election_id))
+                    .one(txn)
+                    .await?
+                    .ok_or(DbErr::RecordNotFound("Election not found".to_string()))?;
+
+                let now = Utc::now();
+                if now >= election.end_time {
+                    return Err(DbErr::Custom("Election is closed. Tokens can no longer be redeemed.".to_string()));
+                }
+
                 let ballot_token = BallotTokens::find()
                     .filter(entity::Column::ElectionId.eq(&election_id))
                     .filter(entity::Column::Id.eq(&token_id))
@@ -132,8 +145,10 @@ pub async fn redeem_token(
         .map_err(|e| match e {
             sea_orm::TransactionError::Connection(err)
             | sea_orm::TransactionError::Transaction(err) => match err {
+                DbErr::RecordNotFound(msg) if msg.contains("Election not found") => Error::NotFound,
                 DbErr::RecordNotFound(_) => Error::NotFound,
                 DbErr::Custom(msg) if msg == "Token already redeemed" => Error::BadRequest(msg),
+                DbErr::Custom(msg) if msg == "Election is closed. Tokens can no longer be redeemed." => Error::BadRequest(msg),
                 _ => Error::Internal(format!("Failed to redeem token: {}", err)),
             },
         })?;
