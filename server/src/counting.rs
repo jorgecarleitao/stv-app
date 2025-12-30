@@ -31,6 +31,7 @@ pub struct ElectionResult {
     pub election: Election,
     pub log: String,
     pub elected: Vec<Elected>,
+    pub pairwise_scores: Vec<usize>, // Copeland scores for each candidate
 }
 
 fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
@@ -47,7 +48,7 @@ fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
         })
 }
 
-fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> HashMap<usize, usize> {
+fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> (HashMap<usize, usize>, Vec<usize>) {
     // Precompute rank arrays for each ballot
     let ballot_ranks: Vec<Vec<Option<usize>>> = ballots.iter().map(|b| b.ranks.clone()).collect();
 
@@ -92,7 +93,7 @@ fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> HashMap<us
     for (order, cand) in idxs.into_iter().enumerate() {
         result.insert(cand, order);
     }
-    result
+    (result, scores)
 }
 
 pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
@@ -133,7 +134,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     )
     .unwrap();
 
-    let order = pairwise_order(&election.ballots, election.candidates.len());
+    let (order, pairwise_scores) = pairwise_order(&election.ballots, election.candidates.len());
     result
         .elected
         .sort_by_key(|&candidate_id| order.get(&candidate_id).copied().unwrap_or(usize::MAX));
@@ -151,6 +152,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
         election,
         log: String::from_utf8(log).unwrap(),
         elected,
+        pairwise_scores,
     })
 }
 

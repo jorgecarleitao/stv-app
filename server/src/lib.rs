@@ -17,7 +17,7 @@ pub mod error;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ElectionConfig {
     pub id: String,
-    pub name: String,
+    pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub candidates: Vec<String>,
@@ -61,7 +61,7 @@ async fn list_elections(
         .into_iter()
         .map(|e| ElectionConfig {
             id: e.uuid,
-            name: e.title,
+            title: e.title,
             description: e.description,
             candidates: e.candidates.0,
             seats: e.num_seats,
@@ -147,7 +147,7 @@ async fn get_election(
     // Convert database election to ElectionConfig format
     let election_config = ElectionConfig {
         id: election.uuid,
-        name: election.title,
+        title: election.title,
         description: election.description,
         candidates: election.candidates.0.clone(),
         seats: election.num_seats,
