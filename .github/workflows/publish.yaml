@@ -7,12 +7,12 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - name: Set up Rust
+        uses: actions/setup-rust@v1
         with:
-          toolchain: stable
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
+          rust-version: stable
+      - name: Run cargo test
+        run: cargo test
 
   push_to_registry:
     needs: test
