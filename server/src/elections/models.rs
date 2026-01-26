@@ -6,6 +6,7 @@ pub struct CreateElectionRequest {
     pub description: Option<String>,
     pub candidates: Vec<String>,
     pub num_seats: u32,
+    pub ordered_seats: bool,
     pub start_time: chrono::DateTime<chrono::Utc>,
     pub end_time: chrono::DateTime<chrono::Utc>,
 }
@@ -18,6 +19,7 @@ pub struct ElectionResponse {
     pub description: Option<String>,
     pub candidates: Vec<String>,
     pub num_seats: u32,
+    pub ordered_seats: bool,
     pub start_time: chrono::DateTime<chrono::Utc>,
     pub end_time: chrono::DateTime<chrono::Utc>,
     pub is_locked: bool,

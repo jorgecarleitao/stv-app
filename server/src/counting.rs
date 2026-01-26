@@ -17,6 +17,7 @@ pub struct CombinedBallot {
 pub struct Election {
     pub candidates: Vec<String>,
     pub seats: usize,
+    pub ordered_seats: bool,
     pub ballots: Vec<CombinedBallot>,
 }
 
@@ -99,7 +100,7 @@ fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> (HashMap<u
     (result, matrix)
 }
 
-pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
+pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResult, String> {
     use stv_rs::types::{Ballot, Candidate, Election};
 
     let mut log = Vec::new();
@@ -136,10 +137,17 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     )
     .unwrap();
 
-    let (order, pairwise_matrix) = pairwise_order(&election.ballots, election.candidates.len());
-    result
-        .elected
-        .sort_by_key(|&candidate_id| order.get(&candidate_id).copied().unwrap_or(usize::MAX));
+    // Only perform pairwise ordering if ordered_seats is true
+    let (order, pairwise_matrix) = if ordered_seats {
+        let (ord, mat) = pairwise_order(&election.ballots, election.candidates.len());
+        result
+            .elected
+            .sort_by_key(|&candidate_id| ord.get(&candidate_id).copied().unwrap_or(usize::MAX));
+        (ord, mat)
+    } else {
+        // For unordered seats, use empty order and matrix
+        (HashMap::new(), vec![vec![0; election.candidates.len()]; election.candidates.len()])
+    };
 
     let elected = result
         .elected
@@ -159,7 +167,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     })
 }
 
-pub fn to_election(candidates: Vec<String>, seats: usize, ballots: Vec<Ballot>) -> Election {
+pub fn to_election(candidates: Vec<String>, seats: usize, ordered_seats: bool, ballots: Vec<Ballot>) -> Election {
     // Aggregate ballots by their ranked_choices pattern
     let mut pattern_counts: HashMap<Vec<Option<usize>>, usize> = HashMap::new();
     for ballot in ballots {
@@ -176,6 +184,7 @@ pub fn to_election(candidates: Vec<String>, seats: usize, ballots: Vec<Ballot>) 
     Election {
         candidates: candidates.to_vec(),
         seats,
+        ordered_seats,
         ballots,
     }
 }

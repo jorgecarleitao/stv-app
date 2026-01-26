@@ -22,6 +22,7 @@ pub struct ElectionConfig {
     pub description: Option<String>,
     pub candidates: Vec<String>,
     pub seats: u32,
+    pub ordered_seats: bool,
     pub start_time: chrono::DateTime<Utc>,
     pub end_time: chrono::DateTime<Utc>,
     pub number_of_ballots: usize,
@@ -65,6 +66,7 @@ async fn list_elections(
             description: e.description,
             candidates: e.candidates.0,
             seats: e.num_seats,
+            ordered_seats: e.ordered_seats,
             start_time: e.start_time,
             end_time: e.end_time,
             number_of_ballots: 0, // Would need to query tokens to get accurate count
@@ -132,9 +134,10 @@ async fn get_election(
         let election_for_counting = counting::to_election(
             election.candidates.0.clone(),
             election.num_seats as usize,
+            election.ordered_seats,
             ballots,
         );
-        Some(counting::stv_droop(election_for_counting).map_err(|e| {
+        Some(counting::stv_droop(election_for_counting, election.ordered_seats).map_err(|e| {
             error::Error::Internal(format!(
                 "STV counting failed for {}: {:?}",
                 election_uuid, e
@@ -151,6 +154,7 @@ async fn get_election(
         description: election.description,
         candidates: election.candidates.0.clone(),
         seats: election.num_seats,
+        ordered_seats: election.ordered_seats,
         start_time: election.start_time,
         end_time: election.end_time,
         number_of_ballots: potential_voters,
@@ -195,7 +199,7 @@ async fn simulate(
         }
     }
 
-    counting::stv_droop(election)
+    counting::stv_droop(election.clone(), election.ordered_seats)
         .map_err(|e| error::Error::Internal(format!("Simulation failed: {:?}", e)))
         .map(Json)
 }

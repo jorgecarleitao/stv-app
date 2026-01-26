@@ -3,6 +3,7 @@ pub use sea_orm_migration::prelude::*;
 mod m20250102_000001_create_elections;
 mod m20250102_000002_create_ballots;
 mod m20250102_000003_create_ballot_tokens;
+mod m20250126_000001_add_ordered_seats;
 
 pub struct Migrator;
 
@@ -13,6 +14,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250102_000001_create_elections::Migration),
             Box::new(m20250102_000002_create_ballots::Migration),
             Box::new(m20250102_000003_create_ballot_tokens::Migration),
+            Box::new(m20250126_000001_add_ordered_seats::Migration),
         ]
     }
 }

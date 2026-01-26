@@ -41,6 +41,7 @@ pub async fn create_election(
         description: Set(req.description),
         candidates: Set(entity::Candidates(req.candidates)),
         num_seats: Set(req.num_seats),
+        ordered_seats: Set(req.ordered_seats),
         start_time: Set(req.start_time.into()),
         end_time: Set(req.end_time.into()),
     };
@@ -57,6 +58,7 @@ pub async fn create_election(
         description: inserted.description,
         candidates: inserted.candidates.0,
         num_seats: inserted.num_seats,
+        ordered_seats: inserted.ordered_seats,
         start_time: inserted.start_time.into(),
         end_time: inserted.end_time.into(),
         is_locked: false, // New elections are never locked
@@ -85,6 +87,7 @@ pub async fn get_election_by_admin(
         description: election.description,
         candidates: election.candidates.0,
         num_seats: election.num_seats,
+        ordered_seats: election.ordered_seats,
         start_time: election.start_time.into(),
         end_time: election.end_time.into(),
         is_locked,
@@ -129,6 +132,7 @@ pub async fn update_election_by_admin(
     election_active.description = Set(req.description);
     election_active.candidates = Set(entity::Candidates(req.candidates));
     election_active.num_seats = Set(req.num_seats);
+    election_active.ordered_seats = Set(req.ordered_seats);
     election_active.start_time = Set(req.start_time.into());
     election_active.end_time = Set(req.end_time.into());
 
@@ -148,6 +152,7 @@ pub async fn update_election_by_admin(
         description: updated.description,
         candidates: updated.candidates.0,
         num_seats: updated.num_seats,
+        ordered_seats: updated.ordered_seats,
         start_time: updated.start_time.into(),
         end_time: updated.end_time.into(),
         is_locked,
