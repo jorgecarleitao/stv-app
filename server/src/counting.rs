@@ -50,7 +50,10 @@ fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
         })
 }
 
-fn pairwise_order(ballots: &[CombinedBallot], n_candidates: usize) -> (HashMap<usize, usize>, Vec<Vec<usize>>) {
+fn pairwise_order(
+    ballots: &[CombinedBallot],
+    n_candidates: usize,
+) -> (HashMap<usize, usize>, Vec<Vec<usize>>) {
     // Precompute rank arrays for each ballot
     let ballot_ranks: Vec<Vec<Option<usize>>> = ballots.iter().map(|b| b.ranks.clone()).collect();
 
@@ -124,7 +127,10 @@ pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResu
         .ballots(ballots)
         .build();
 
-    let mut result = stv_rs::meek::stv_droop::<stv_rs::arithmetic::Integer64, stv_rs::arithmetic::FixedDecimal9>(
+    let mut result = stv_rs::meek::stv_droop::<
+        stv_rs::arithmetic::Integer64,
+        stv_rs::arithmetic::FixedDecimal9,
+    >(
         &mut log,
         &stv_election,
         "election",
@@ -146,7 +152,10 @@ pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResu
         (ord, mat)
     } else {
         // For unordered seats, use empty order and matrix
-        (HashMap::new(), vec![vec![0; election.candidates.len()]; election.candidates.len()])
+        (
+            HashMap::new(),
+            vec![vec![0; election.candidates.len()]; election.candidates.len()],
+        )
     };
 
     let elected = result
@@ -167,7 +176,12 @@ pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResu
     })
 }
 
-pub fn to_election(candidates: Vec<String>, seats: usize, ordered_seats: bool, ballots: Vec<Ballot>) -> Election {
+pub fn to_election(
+    candidates: Vec<String>,
+    seats: usize,
+    ordered_seats: bool,
+    ballots: Vec<Ballot>,
+) -> Election {
     // Aggregate ballots by their ranked_choices pattern
     let mut pattern_counts: HashMap<Vec<Option<usize>>, usize> = HashMap::new();
     for ballot in ballots {

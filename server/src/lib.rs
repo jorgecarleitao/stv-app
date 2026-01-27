@@ -137,12 +137,14 @@ async fn get_election(
             election.ordered_seats,
             ballots,
         );
-        Some(counting::stv_droop(election_for_counting, election.ordered_seats).map_err(|e| {
-            error::Error::Internal(format!(
-                "STV counting failed for {}: {:?}",
-                election_uuid, e
-            ))
-        })?)
+        Some(
+            counting::stv_droop(election_for_counting, election.ordered_seats).map_err(|e| {
+                error::Error::Internal(format!(
+                    "STV counting failed for {}: {:?}",
+                    election_uuid, e
+                ))
+            })?,
+        )
     } else {
         None
     };
