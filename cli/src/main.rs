@@ -13,7 +13,7 @@ async fn main() -> Result<(), String> {
 
     // Initialize database
     let database_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:election.db".to_string());
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:election.db?mode=rwc".to_string());
 
     let db = Database::connect(&database_url)
         .await

@@ -6,6 +6,7 @@ use axum::{
 use chrono::Utc;
 use sea_orm::{ColumnTrait, DbConn, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 pub mod ballot_tokens;
 pub mod ballots;
@@ -14,20 +15,30 @@ pub mod elections;
 pub mod error;
 
 /// ElectionConfig - what gets sent to the API (no sensitive info)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ElectionConfig {
+    /// Unique identifier for the election
     pub id: String,
+    /// Title of the election
     pub title: String,
+    /// Optional description providing additional details about the election
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// List of candidate names
     pub candidates: Vec<String>,
+    /// Number of seats to be filled in the election
     pub seats: u32,
+    /// Whether the order of elected candidates matters
     pub ordered_seats: bool,
+    /// Election start time (ISO 8601 format)
     pub start_time: chrono::DateTime<Utc>,
+    /// Election end time (ISO 8601 format)
     pub end_time: chrono::DateTime<Utc>,
+    /// Total number of ballot tokens issued for this election
     pub number_of_ballots: usize,
+    /// List of ballot IDs (only visible after election ends)
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ballots: Option<Vec<String>>, // Could list all ballot IDs for transparency (voter knows their UUID)
+    pub ballots: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -35,20 +46,41 @@ pub struct AppState {
     pub db: DbConn,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ElectionState {
+    /// Election configuration and metadata
     pub election: ElectionConfig,
+    /// Number of ballot tokens issued (potential voters)
     pub potential_voters: usize,
+    /// Number of ballots that have been cast
     pub casted: usize,
+    /// Election results (only available after election ends)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<counting::ElectionResult>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    responses(
+        (status = 200, description = "Service is healthy")
+    ),
+    tag = "system"
+)]
 #[axum::debug_handler]
 async fn health() -> Result<(), error::Error> {
     Ok(())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/elections",
+    responses(
+        (status = 200, description = "List of all elections", body = Vec<ElectionConfig>),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "elections"
+)]
 #[axum::debug_handler]
 async fn list_elections(
     State(state): State<AppState>,
@@ -77,6 +109,19 @@ async fn list_elections(
     Ok(Json(configs))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/elections/{election_uuid}",
+    params(
+        ("election_uuid" = String, Path, description = "Election UUID")
+    ),
+    responses(
+        (status = 200, description = "Election state with results if available", body = ElectionState),
+        (status = 404, description = "Election not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "elections"
+)]
 #[axum::debug_handler]
 async fn get_election(
     Path(election_uuid): Path<String>,
@@ -175,6 +220,17 @@ async fn get_election(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/simulate",
+    request_body = counting::Election,
+    responses(
+        (status = 200, description = "Election simulation results", body = counting::ElectionResult),
+        (status = 400, description = "Invalid election data"),
+        (status = 500, description = "Simulation failed")
+    ),
+    tag = "simulation"
+)]
 #[axum::debug_handler]
 async fn simulate(
     Json(election): Json<counting::Election>,
@@ -209,6 +265,53 @@ async fn simulate(
 pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
     use axum::http::Method;
     use tower_http::cors::{Any, CorsLayer};
+    use utoipa::OpenApi;
+
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(
+            health,
+            list_elections,
+            get_election,
+            simulate,
+            elections::handlers::create_election,
+            elections::handlers::get_election_by_admin,
+            elections::handlers::update_election_by_admin,
+            ballot_tokens::handlers::get_ballot_tokens,
+            ballot_tokens::handlers::create_ballot_tokens,
+            ballot_tokens::handlers::redeem_token,
+            ballot_tokens::handlers::get_token_info,
+            ballots::handlers::get_ballots_by_election,
+            ballots::handlers::get_ballot,
+            ballots::handlers::put_ballot,
+        ),
+        components(
+            schemas(
+                ElectionConfig,
+                ElectionState,
+                counting::Ballot,
+                counting::CombinedBallot,
+                counting::Election,
+                counting::ElectionResult,
+                counting::Elected,
+                elections::CreateElectionRequest,
+                elections::ElectionResponse,
+            )
+        ),
+        tags(
+            (name = "system", description = "System health endpoints"),
+            (name = "elections", description = "Election management endpoints"),
+            (name = "ballot-tokens", description = "Ballot token management endpoints"),
+            (name = "ballots", description = "Ballot management endpoints"),
+            (name = "simulation", description = "Election simulation endpoints")
+        ),
+        info(
+            title = "STV Election API",
+            version = "0.1.0",
+            description = "API for Single Transferable Vote (STV) election system",
+        )
+    )]
+    struct ApiDoc;
 
     let state = AppState { db };
 
@@ -261,6 +364,16 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
         .route("/api/health", get(health))
         .nest("/api/elections", elections_router)
         .route("/api/simulate", post(simulate))
+        .route(
+            "/api/openapi.json",
+            get(|| async { Json(ApiDoc::openapi()) }),
+        )
+        .route(
+            "/swagger-ui",
+            get(|| async {
+                axum::response::Html(include_str!("swagger-ui.html"))
+            }),
+        )
         .with_state(state)
         .fallback_service(static_dir)
         .layer(cors))

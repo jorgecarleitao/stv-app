@@ -1,6 +1,11 @@
 # STV Election App
 
-This project provides a complete platform for running, managing, and explaining Single Transferable Vote (STV) elections. It supports the full election lifecycle: setup, secure ballot distribution, voting, tallying, and transparent result explanation.
+This project provides a complete platform for running, managing, and explaining Single Transferable Vote (STV) elections.
+It supports the full election lifecycle: setup, secure ballot distribution, voting, tallying, and transparent result explanation.
+
+* [stv-app-infrastructure](https://github.com/jorgecarleitao/stv-app-infrastructure)
+* [stv-app](https://github.com/jorgecarleitao/stv-app)
+* [stv-app-frontend](https://github.com/jorgecarleitao/stv-app-frontend)
 
 ## Features
 

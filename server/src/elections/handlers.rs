@@ -26,6 +26,16 @@ where
     Ok(redeemed_token_count > 0)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/elections",
+    request_body = CreateElectionRequest,
+    responses(
+        (status = 200, description = "Election created successfully", body = ElectionResponse),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "elections"
+)]
 #[axum::debug_handler]
 pub async fn create_election(
     State(state): State<AppState>,
@@ -65,6 +75,20 @@ pub async fn create_election(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/elections/{election_id}/admin/{admin_uuid}",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("admin_uuid" = String, Path, description = "Admin UUID for authorization")
+    ),
+    responses(
+        (status = 200, description = "Election details retrieved", body = ElectionResponse),
+        (status = 404, description = "Election not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "elections"
+)]
 #[axum::debug_handler]
 pub async fn get_election_by_admin(
     State(state): State<AppState>,
@@ -94,6 +118,22 @@ pub async fn get_election_by_admin(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/elections/{election_id}/admin/{admin_uuid}",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("admin_uuid" = String, Path, description = "Admin UUID for authorization")
+    ),
+    request_body = CreateElectionRequest,
+    responses(
+        (status = 200, description = "Election updated successfully", body = ElectionResponse),
+        (status = 400, description = "Bad request - election is locked or invalid data"),
+        (status = 404, description = "Election not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "elections"
+)]
 #[axum::debug_handler]
 pub async fn update_election_by_admin(
     State(state): State<AppState>,

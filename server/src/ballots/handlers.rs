@@ -8,6 +8,18 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use super::{Ballots, Ranks, entity};
 use crate::{AppState, counting, elections, error::Error};
 
+#[utoipa::path(
+    get,
+    path = "/api/elections/{election_id}/ballots",
+    params(
+        ("election_id" = String, Path, description = "Election UUID")
+    ),
+    responses(
+        (status = 200, description = "List of ballots for the election"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "ballots"
+)]
 #[axum::debug_handler]
 pub async fn get_ballots_by_election(
     State(state): State<AppState>,
@@ -27,6 +39,20 @@ pub async fn get_ballots_by_election(
     Ok(Json(ballots))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/elections/{election_id}/ballot/{uuid}",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("uuid" = String, Path, description = "Ballot UUID")
+    ),
+    responses(
+        (status = 200, description = "Ballot details"),
+        (status = 404, description = "Ballot not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "ballots"
+)]
 #[axum::debug_handler]
 pub async fn get_ballot(
     Path((election_id, uuid)): Path<(String, String)>,
@@ -43,6 +69,22 @@ pub async fn get_ballot(
     Ok(Json(ballot))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/elections/{election_id}/ballot/{uuid}",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("uuid" = String, Path, description = "Ballot UUID")
+    ),
+    request_body = counting::Ballot,
+    responses(
+        (status = 200, description = "Ballot updated successfully"),
+        (status = 400, description = "Invalid ballot data or voting period constraints"),
+        (status = 404, description = "Ballot or election not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "ballots"
+)]
 #[axum::debug_handler]
 pub async fn put_ballot(
     Path((election_id, uuid)): Path<(String, String)>,

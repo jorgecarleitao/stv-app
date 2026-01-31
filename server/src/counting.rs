@@ -1,39 +1,55 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Ballot {
-    pub ranks: Vec<Option<usize>>, // indices into candidates list
+    /// Ranked preferences as indices into the candidates list. None indicates no preference for that position.
+    #[schema(example = json!([0, 2, 1]))]
+    pub ranks: Vec<Option<usize>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CombinedBallot {
+    /// Number of identical ballots with these rankings
     pub votes: usize,
-    pub ranks: Vec<Option<usize>>, // indices into candidates list
+    /// Ranked preferences as indices into the candidates list
+    pub ranks: Vec<Option<usize>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Election {
+    /// List of candidate names
     pub candidates: Vec<String>,
+    /// Number of seats to be filled
     pub seats: usize,
+    /// Whether the order of elected candidates matters
     pub ordered_seats: bool,
+    /// List of ballots (may be combined for identical rankings)
     pub ballots: Vec<CombinedBallot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Elected {
+    /// Name of the elected candidate
     pub candidate: String,
+    /// Index/ID of the candidate in the candidates list
     pub id: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ElectionResult {
+    /// The election that was counted
     pub election: Election,
+    /// Detailed log of the counting process, including each round
     pub log: String,
+    /// List of elected candidates in order
     pub elected: Vec<Elected>,
-    pub order: HashMap<usize, usize>, // Map from candidate ID to order position
-    pub pairwise_matrix: Vec<Vec<usize>>, // n×n matrix of pairwise comparisons
+    /// Map from candidate ID to their final position/order
+    pub order: HashMap<usize, usize>,
+    /// Pairwise comparison matrix showing head-to-head preferences between candidates
+    pub pairwise_matrix: Vec<Vec<usize>>,
 }
 
 fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {

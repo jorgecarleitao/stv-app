@@ -10,6 +10,20 @@ use super::{BallotTokens, entity};
 use crate::{AppState, elections, error::Error};
 
 /// Get all ballot tokens for an election by admin_uuid (admin only)
+#[utoipa::path(
+    get,
+    path = "/api/elections/{election_id}/admin/{admin_uuid}/tokens",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("admin_uuid" = String, Path, description = "Admin UUID for authorization")
+    ),
+    responses(
+        (status = 200, description = "List of ballot tokens"),
+        (status = 404, description = "Election not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "ballot-tokens"
+)]
 #[axum::debug_handler]
 pub async fn get_ballot_tokens(
     State(state): State<AppState>,
@@ -34,6 +48,21 @@ pub async fn get_ballot_tokens(
 }
 
 /// Create ballot tokens for an election by admin_uuid (admin only)
+#[utoipa::path(
+    post,
+    path = "/api/elections/{election_id}/admin/{admin_uuid}/tokens",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("admin_uuid" = String, Path, description = "Admin UUID for authorization")
+    ),
+    request_body = usize,
+    responses(
+        (status = 200, description = "List of generated token IDs", body = Vec<String>),
+        (status = 404, description = "Election not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "ballot-tokens"
+)]
 #[axum::debug_handler]
 pub async fn create_ballot_tokens(
     State(state): State<AppState>,
@@ -83,6 +112,21 @@ pub async fn create_ballot_tokens(
 }
 
 /// Redeem a token to create a ballot (voter action)
+#[utoipa::path(
+    post,
+    path = "/api/elections/{election_id}/tokens/{token_id}/redeem",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("token_id" = String, Path, description = "Ballot token ID to redeem")
+    ),
+    responses(
+        (status = 200, description = "Ballot ID created", body = String),
+        (status = 400, description = "Token already redeemed or election closed"),
+        (status = 404, description = "Token or election not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "ballot-tokens"
+)]
 #[axum::debug_handler]
 pub async fn redeem_token(
     State(state): State<AppState>,
@@ -163,6 +207,20 @@ pub async fn redeem_token(
 }
 
 /// Get token info (without redeeming it) - voter can check if already redeemed
+#[utoipa::path(
+    get,
+    path = "/api/elections/{election_id}/tokens/{token_id}",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("token_id" = String, Path, description = "Ballot token ID")
+    ),
+    responses(
+        (status = 200, description = "Token information"),
+        (status = 404, description = "Token not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "ballot-tokens"
+)]
 #[axum::debug_handler]
 pub async fn get_token_info(
     State(state): State<AppState>,

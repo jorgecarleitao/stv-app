@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 # API
 axum = { workspace = true }
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 # log
 tracing = { workspace = true }
 # serde
@@ -34,5 +35,4 @@ pretty_assertions = "1"
 axum-test = "17"
 test-log = {version = "0.2", features = ["trace"]}
 reqwest = {version = "*", features = ["blocking"]}
-serde_json = "*"
 migration = { path = "./migration" }
