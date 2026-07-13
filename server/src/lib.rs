@@ -13,6 +13,7 @@ pub mod ballots;
 pub mod counting;
 pub mod elections;
 pub mod error;
+pub mod log;
 
 /// ElectionConfig - what gets sent to the API (no sensitive info)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -294,6 +295,15 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
                 counting::Election,
                 counting::ElectionResult,
                 counting::Elected,
+                log::CountingLog,
+                log::CountingLogHeader,
+                log::CountingLogCandidate,
+                log::CountingLogRound,
+                log::CountingLogAction,
+                log::CountingLogActionType,
+                log::CountingLogCandidateCount,
+                log::CountingLogCandidateStatus,
+                log::CountingLogStats,
                 elections::CreateElectionRequest,
                 elections::ElectionResponse,
             )

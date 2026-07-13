@@ -1,3 +1,5 @@
+mod log;
+
 use axum_test::TestServer;
 use serde_json::json;
 

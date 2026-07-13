@@ -77,6 +77,6 @@ docker run --rm -p 8080:8080 \
 
 ```bash
 cargo test
-RUST_LOG=info DATABASE_URL="sqlite:election-data/elections.db?mode=rwc" cargo run --bin cli
+RUST_LOG=info DATABASE_URL="sqlite:elections.db?mode=rwc" cargo run --bin cli
 docker build -t test .
 ```

@@ -2945,6 +2945,7 @@ dependencies = [
  "chrono",
  "migration",
  "pretty_assertions",
+ "regex",
  "reqwest",
  "sea-orm",
  "sea-orm-migration",

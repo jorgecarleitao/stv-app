@@ -42,8 +42,8 @@ pub struct Elected {
 pub struct ElectionResult {
     /// The election that was counted
     pub election: Election,
-    /// Detailed log of the counting process, including each round
-    pub log: String,
+    /// Detailed log of the counting process, parsed into structured data
+    pub log: crate::log::CountingLog,
     /// List of elected candidates in order
     pub elected: Vec<Elected>,
     /// Map from candidate ID to their final position/order
@@ -185,7 +185,7 @@ pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResu
 
     Ok(ElectionResult {
         election,
-        log: String::from_utf8(log).unwrap(),
+        log: crate::log::parse_log(&String::from_utf8(log).unwrap()),
         elected,
         order,
         pairwise_matrix,
