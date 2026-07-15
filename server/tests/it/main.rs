@@ -44,7 +44,7 @@ async fn test_election_workflow() -> Result<(), String> {
             "description": "Test election for integration tests",
             "candidates": ["Apple", "Banana"],
             "num_seats": 1,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2099-12-31T23:59:59Z"
         }))
@@ -160,7 +160,7 @@ async fn test_election_workflow() -> Result<(), String> {
             "description": "Test election for integration tests",
             "candidates": ["Apple", "Banana"],
             "num_seats": 1,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2000-01-01T00:00:00Z"
         }))
@@ -181,9 +181,9 @@ async fn test_election_workflow() -> Result<(), String> {
     );
 
     let results = state.results.unwrap();
-    assert_eq!(results.elected.len(), 1);
-    assert_eq!(results.elected[0].candidate, "Apple");
-    assert_eq!(results.election.ballots.len(), 2); // Two ballot groups: 10 Apple->Banana, 9 Banana->Apple
+    assert_eq!(results.elected().len(), 1);
+    assert_eq!(results.elected()[0].candidate, "Apple");
+    assert_eq!(results.election().ballots.len(), 2); // Two ballot groups: 10 Apple->Banana, 9 Banana->Apple
 
     // Verify ballot IDs are exposed after election ends
     assert!(
@@ -224,7 +224,7 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
             "description": "Test that candidates cannot be modified after tokens are redeemed",
             "candidates": ["Alice", "Bob", "Charlie"],
             "num_seats": 1,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2099-12-31T23:59:59Z"
         }))
@@ -249,7 +249,7 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
             "description": "Test that candidates cannot be modified after tokens are redeemed",
             "candidates": ["Alice", "Bob", "Charlie", "Diana"],
             "num_seats": 1,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2099-12-31T23:59:59Z"
         }))
@@ -292,7 +292,7 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
             "description": "Test that candidates cannot be modified after tokens are redeemed",
             "candidates": ["Alice", "Bob", "Charlie", "Diana", "Eve"],
             "num_seats": 1,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2099-12-31T23:59:59Z"
         }))
@@ -319,7 +319,7 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
             "description": "Test that candidates cannot be modified after tokens are redeemed",
             "candidates": ["Alice", "Bob", "Charlie", "Diana"],
             "num_seats": 1,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2099-12-31T23:59:59Z"
         }))
@@ -341,7 +341,7 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
             "description": "Modified description",
             "candidates": ["Alice", "Bob", "Charlie", "Diana"],
             "num_seats": 1,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2099-12-31T23:59:59Z"
         }))
@@ -363,7 +363,7 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
             "description": "Test that candidates cannot be modified after tokens are redeemed",
             "candidates": ["Alice", "Bob", "Charlie", "Diana"],
             "num_seats": 2,
-            "ordered_seats": true,
+            "election_type": "stv-md-coperland",
             "start_time": "2024-01-01T00:00:00Z",
             "end_time": "2099-12-31T23:59:59Z"
         }))

@@ -15,7 +15,7 @@ pub struct Model {
     pub description: Option<String>,
     pub candidates: Candidates,
     pub num_seats: u32,
-    pub ordered_seats: bool,
+    pub election_type: String,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
 }

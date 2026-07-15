@@ -9,7 +9,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::{CreateElectionRequest, ElectionResponse, Elections, entity};
-use crate::{AppState, error::Error};
+use crate::{AppState, counting::ElectionType, error::Error};
 
 /// Check if an election is locked (has any redeemed tokens)
 async fn is_election_locked<C>(db: &C, election_id: &str) -> Result<bool, Error>
@@ -24,6 +24,21 @@ where
         .await
         .map_err(|e| Error::Internal(format!("Failed to check tokens: {}", e)))?;
     Ok(redeemed_token_count > 0)
+}
+
+fn election_type_to_string(t: ElectionType) -> String {
+    match t {
+        ElectionType::StvMd => "stv-md".to_string(),
+        ElectionType::StvMdCoperland => "stv-md-coperland".to_string(),
+    }
+}
+
+fn parse_election_type(s: &str) -> Result<ElectionType, Error> {
+    match s {
+        "stv-md" => Ok(ElectionType::StvMd),
+        "stv-md-coperland" => Ok(ElectionType::StvMdCoperland),
+        _ => Err(Error::Internal(format!("Invalid election_type '{}'", s))),
+    }
 }
 
 #[utoipa::path(
@@ -51,7 +66,7 @@ pub async fn create_election(
         description: Set(req.description),
         candidates: Set(entity::Candidates(req.candidates)),
         num_seats: Set(req.num_seats),
-        ordered_seats: Set(req.ordered_seats),
+        election_type: Set(election_type_to_string(req.election_type)),
         start_time: Set(req.start_time.into()),
         end_time: Set(req.end_time.into()),
     };
@@ -68,7 +83,7 @@ pub async fn create_election(
         description: inserted.description,
         candidates: inserted.candidates.0,
         num_seats: inserted.num_seats,
-        ordered_seats: inserted.ordered_seats,
+        election_type: parse_election_type(&inserted.election_type)?,
         start_time: inserted.start_time.into(),
         end_time: inserted.end_time.into(),
         is_locked: false, // New elections are never locked
@@ -111,7 +126,7 @@ pub async fn get_election_by_admin(
         description: election.description,
         candidates: election.candidates.0,
         num_seats: election.num_seats,
-        ordered_seats: election.ordered_seats,
+        election_type: parse_election_type(&election.election_type)?,
         start_time: election.start_time.into(),
         end_time: election.end_time.into(),
         is_locked,
@@ -172,7 +187,7 @@ pub async fn update_election_by_admin(
     election_active.description = Set(req.description);
     election_active.candidates = Set(entity::Candidates(req.candidates));
     election_active.num_seats = Set(req.num_seats);
-    election_active.ordered_seats = Set(req.ordered_seats);
+    election_active.election_type = Set(election_type_to_string(req.election_type));
     election_active.start_time = Set(req.start_time.into());
     election_active.end_time = Set(req.end_time.into());
 
@@ -192,7 +207,7 @@ pub async fn update_election_by_admin(
         description: updated.description,
         candidates: updated.candidates.0,
         num_seats: updated.num_seats,
-        ordered_seats: updated.ordered_seats,
+        election_type: parse_election_type(&updated.election_type)?,
         start_time: updated.start_time.into(),
         end_time: updated.end_time.into(),
         is_locked,

@@ -3,6 +3,13 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ElectionType {
+    StvMd,
+    StvMdCoperland,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Ballot {
     /// Ranked preferences as indices into the candidates list. None indicates no preference for that position.
@@ -24,8 +31,8 @@ pub struct Election {
     pub candidates: Vec<String>,
     /// Number of seats to be filled
     pub seats: usize,
-    /// Whether the order of elected candidates matters
-    pub ordered_seats: bool,
+    /// Type of election algorithm to use
+    pub election_type: ElectionType,
     /// List of ballots (may be combined for identical rankings)
     pub ballots: Vec<CombinedBallot>,
 }
@@ -39,17 +46,65 @@ pub struct Elected {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct ElectionResult {
-    /// The election that was counted
-    pub election: Election,
-    /// Detailed log of the counting process, parsed into structured data
-    pub log: crate::log::CountingLog,
-    /// List of elected candidates in order
-    pub elected: Vec<Elected>,
-    /// Map from candidate ID to their final position/order
-    pub order: HashMap<usize, usize>,
-    /// Pairwise comparison matrix showing head-to-head preferences between candidates
-    pub pairwise_matrix: Vec<Vec<usize>>,
+#[serde(tag = "type")]
+pub enum ElectionResult {
+    StvMd {
+        /// The election that was counted
+        election: Election,
+        /// Detailed log of the counting process, parsed into structured data
+        log: crate::log::CountingLog,
+        /// List of elected candidates in order
+        elected: Vec<Elected>,
+    },
+    StvMdCoperland {
+        /// The election that was counted
+        election: Election,
+        /// Detailed log of the counting process, parsed into structured data
+        log: crate::log::CountingLog,
+        /// List of elected candidates in order
+        elected: Vec<Elected>,
+        /// Map from candidate ID (as string) to their final position/order
+        order: HashMap<String, usize>,
+        /// Pairwise comparison matrix showing head-to-head preferences between candidates
+        pairwise_matrix: Vec<Vec<usize>>,
+    },
+}
+
+impl ElectionResult {
+    pub fn election(&self) -> &Election {
+        match self {
+            ElectionResult::StvMd { election, .. } => election,
+            ElectionResult::StvMdCoperland { election, .. } => election,
+        }
+    }
+
+    pub fn elected(&self) -> &[Elected] {
+        match self {
+            ElectionResult::StvMd { elected, .. } => elected,
+            ElectionResult::StvMdCoperland { elected, .. } => elected,
+        }
+    }
+
+    pub fn log(&self) -> &crate::log::CountingLog {
+        match self {
+            ElectionResult::StvMd { log, .. } => log,
+            ElectionResult::StvMdCoperland { log, .. } => log,
+        }
+    }
+
+    pub fn order(&self) -> Option<&HashMap<String, usize>> {
+        match self {
+            ElectionResult::StvMd { .. } => None,
+            ElectionResult::StvMdCoperland { order, .. } => Some(order),
+        }
+    }
+
+    pub fn pairwise_matrix(&self) -> Option<&Vec<Vec<usize>>> {
+        match self {
+            ElectionResult::StvMd { .. } => None,
+            ElectionResult::StvMdCoperland { pairwise_matrix, .. } => Some(pairwise_matrix),
+        }
+    }
 }
 
 fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
@@ -69,7 +124,7 @@ fn ranks_to_order(ranks: &[Option<usize>]) -> Vec<Vec<usize>> {
 fn pairwise_order(
     ballots: &[CombinedBallot],
     n_candidates: usize,
-) -> (HashMap<usize, usize>, Vec<Vec<usize>>) {
+) -> (HashMap<String, usize>, Vec<Vec<usize>>) {
     // Precompute rank arrays for each ballot
     let ballot_ranks: Vec<Vec<Option<usize>>> = ballots.iter().map(|b| b.ranks.clone()).collect();
 
@@ -114,12 +169,12 @@ fn pairwise_order(
     // Map candidate id to order
     let mut result = HashMap::new();
     for (order, cand) in idxs.into_iter().enumerate() {
-        result.insert(cand, order);
+        result.insert(cand.to_string(), order);
     }
     (result, matrix)
 }
 
-pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResult, String> {
+pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     use stv_rs::types::{Ballot, Candidate, Election};
 
     let mut log = Vec::new();
@@ -159,46 +214,57 @@ pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResu
     )
     .unwrap();
 
-    // Only perform pairwise ordering if ordered_seats is true
-    let (order, pairwise_matrix) = if ordered_seats {
-        let (ord, mat) = pairwise_order(&election.ballots, election.candidates.len());
-        result
-            .elected
-            .sort_by_key(|&candidate_id| ord.get(&candidate_id).copied().unwrap_or(usize::MAX));
-        (ord, mat)
-    } else {
-        // For unordered seats, use empty order and matrix
-        (
-            HashMap::new(),
-            vec![vec![0; election.candidates.len()]; election.candidates.len()],
-        )
-    };
+    let mut counting_log = crate::log::parse_log(&String::from_utf8(log).unwrap());
+    crate::log::sort_candidate_counts(&mut counting_log, &election.candidates);
 
-    let elected = result
-        .elected
-        .into_iter()
-        .map(|e| Elected {
-            candidate: election.candidates[e].clone(),
-            id: e,
-        })
-        .collect();
+    match election.election_type {
+        ElectionType::StvMd => {
+            let elected = result
+                .elected
+                .into_iter()
+                .map(|e| Elected {
+                    candidate: election.candidates[e].clone(),
+                    id: e,
+                })
+                .collect();
 
-    let mut log = crate::log::parse_log(&String::from_utf8(log).unwrap());
-    crate::log::sort_candidate_counts(&mut log, &election.candidates);
+            Ok(ElectionResult::StvMd {
+                election,
+                log: counting_log,
+                elected,
+            })
+        }
+        ElectionType::StvMdCoperland => {
+            let (order, pairwise_matrix) =
+                pairwise_order(&election.ballots, election.candidates.len());
+            result
+                .elected
+                .sort_by_key(|&candidate_id| order.get(&candidate_id.to_string()).copied().unwrap_or(usize::MAX));
 
-    Ok(ElectionResult {
-        election,
-        log,
-        elected,
-        order,
-        pairwise_matrix,
-    })
+            let elected = result
+                .elected
+                .into_iter()
+                .map(|e| Elected {
+                    candidate: election.candidates[e].clone(),
+                    id: e,
+                })
+                .collect();
+
+            Ok(ElectionResult::StvMdCoperland {
+                election,
+                log: counting_log,
+                elected,
+                order,
+                pairwise_matrix,
+            })
+        }
+    }
 }
 
 pub fn to_election(
     candidates: Vec<String>,
     seats: usize,
-    ordered_seats: bool,
+    election_type: ElectionType,
     ballots: Vec<Ballot>,
 ) -> Election {
     // Aggregate ballots by their ranked_choices pattern
@@ -217,7 +283,7 @@ pub fn to_election(
     Election {
         candidates: candidates.to_vec(),
         seats,
-        ordered_seats,
+        election_type,
         ballots,
     }
 }

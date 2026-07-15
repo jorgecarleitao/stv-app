@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::counting::ElectionType;
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct CreateElectionRequest {
     /// Title of the election
@@ -14,8 +16,8 @@ pub struct CreateElectionRequest {
     /// Number of seats to be filled in the election
     #[schema(example = 3)]
     pub num_seats: u32,
-    /// Whether the order of elected candidates matters (true) or not (false)
-    pub ordered_seats: bool,
+    /// Type of election algorithm (e.g. "stv-md", "stv-md-coperland")
+    pub election_type: ElectionType,
     /// Election start time (ISO 8601 format)
     pub start_time: chrono::DateTime<chrono::Utc>,
     /// Election end time (ISO 8601 format)
@@ -36,8 +38,8 @@ pub struct ElectionResponse {
     pub candidates: Vec<String>,
     /// Number of seats to be filled in the election
     pub num_seats: u32,
-    /// Whether the order of elected candidates matters
-    pub ordered_seats: bool,
+    /// Type of election algorithm
+    pub election_type: ElectionType,
     /// Election start time (ISO 8601 format)
     pub start_time: chrono::DateTime<chrono::Utc>,
     /// Election end time (ISO 8601 format)

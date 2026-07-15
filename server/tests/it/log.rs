@@ -1,5 +1,5 @@
 use regex::Regex;
-use server::counting::{self, CombinedBallot, Election};
+use server::counting::{self, CombinedBallot, Election, ElectionType};
 use server::log::{CountingLogAction, CountingLogActionType, CountingLog};
 
 fn run_election(
@@ -10,13 +10,13 @@ fn run_election(
     let election = Election {
         candidates: candidates.into_iter().map(String::from).collect(),
         seats,
-        ordered_seats: false,
+        election_type: ElectionType::StvMd,
         ballots: ballots
             .into_iter()
             .map(|(votes, ranks)| CombinedBallot { votes, ranks })
             .collect(),
     };
-    counting::stv_droop(election, false).unwrap().log
+    counting::stv_droop(election).unwrap().log().clone()
 }
 
 fn all_actions(log: &CountingLog) -> Vec<&CountingLogAction> {

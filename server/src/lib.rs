@@ -29,8 +29,8 @@ pub struct ElectionConfig {
     pub candidates: Vec<String>,
     /// Number of seats to be filled in the election
     pub seats: u32,
-    /// Whether the order of elected candidates matters
-    pub ordered_seats: bool,
+    /// Type of election algorithm
+    pub election_type: counting::ElectionType,
     /// Election start time (ISO 8601 format)
     pub start_time: chrono::DateTime<Utc>,
     /// Election end time (ISO 8601 format)
@@ -58,6 +58,20 @@ pub struct ElectionState {
     /// Election results (only available after election ends)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<counting::ElectionResult>,
+}
+
+fn parse_election_type(s: &str) -> counting::ElectionType {
+    match s {
+        "stv-md-coperland" => counting::ElectionType::StvMdCoperland,
+        _ => counting::ElectionType::StvMd,
+    }
+}
+
+fn election_type_to_string(t: counting::ElectionType) -> String {
+    match t {
+        counting::ElectionType::StvMd => "stv-md".to_string(),
+        counting::ElectionType::StvMdCoperland => "stv-md-coperland".to_string(),
+    }
 }
 
 #[utoipa::path(
@@ -99,7 +113,7 @@ async fn list_elections(
             description: e.description,
             candidates: e.candidates.0,
             seats: e.num_seats,
-            ordered_seats: e.ordered_seats,
+            election_type: parse_election_type(&e.election_type),
             start_time: e.start_time,
             end_time: e.end_time,
             number_of_ballots: 0, // Would need to query tokens to get accurate count
@@ -175,16 +189,17 @@ async fn get_election(
     // Only publish results after the election has ended
     let now = Utc::now();
     let has_ended = now >= election.end_time;
+    let election_type = parse_election_type(&election.election_type);
 
     let results = if has_ended && casted > 0 {
         let election_for_counting = counting::to_election(
             election.candidates.0.clone(),
             election.num_seats as usize,
-            election.ordered_seats,
+            election_type,
             ballots,
         );
         Some(
-            counting::stv_droop(election_for_counting, election.ordered_seats).map_err(|e| {
+            counting::stv_droop(election_for_counting).map_err(|e| {
                 error::Error::Internal(format!(
                     "STV counting failed for {}: {:?}",
                     election_uuid, e
@@ -202,7 +217,7 @@ async fn get_election(
         description: election.description,
         candidates: election.candidates.0.clone(),
         seats: election.num_seats,
-        ordered_seats: election.ordered_seats,
+        election_type,
         start_time: election.start_time,
         end_time: election.end_time,
         number_of_ballots: potential_voters,
@@ -258,7 +273,7 @@ async fn simulate(
         }
     }
 
-    counting::stv_droop(election.clone(), election.ordered_seats)
+    counting::stv_droop(election.clone())
         .map_err(|e| error::Error::Internal(format!("Simulation failed: {:?}", e)))
         .map(Json)
 }
@@ -290,6 +305,7 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
             schemas(
                 ElectionConfig,
                 ElectionState,
+                counting::ElectionType,
                 counting::Ballot,
                 counting::CombinedBallot,
                 counting::Election,
