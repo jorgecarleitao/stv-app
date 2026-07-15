@@ -67,13 +67,6 @@ fn parse_election_type(s: &str) -> counting::ElectionType {
     }
 }
 
-fn election_type_to_string(t: counting::ElectionType) -> String {
-    match t {
-        counting::ElectionType::StvMd => "stv-md".to_string(),
-        counting::ElectionType::StvMdCoperland => "stv-md-coperland".to_string(),
-    }
-}
-
 #[utoipa::path(
     get,
     path = "/api/health",
