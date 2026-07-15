@@ -183,9 +183,12 @@ pub fn stv_droop(election: Election, ordered_seats: bool) -> Result<ElectionResu
         })
         .collect();
 
+    let mut log = crate::log::parse_log(&String::from_utf8(log).unwrap());
+    crate::log::sort_candidate_counts(&mut log, &election.candidates);
+
     Ok(ElectionResult {
         election,
-        log: crate::log::parse_log(&String::from_utf8(log).unwrap()),
+        log,
         elected,
         order,
         pairwise_matrix,

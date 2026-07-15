@@ -242,6 +242,26 @@ pub fn parse_log(raw: &str) -> CountingLog {
     }
 }
 
+/// Re-order candidate_counts in each action to match the original candidate position order.
+pub fn sort_candidate_counts(log: &mut CountingLog, candidate_order: &[String]) {
+    let position: std::collections::HashMap<&str, usize> = candidate_order
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+
+    for round in &mut log.rounds {
+        for action in &mut round.actions {
+            action.candidate_counts.sort_by_key(|c| {
+                position
+                    .get(c.name.as_str())
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            });
+        }
+    }
+}
+
 fn parse_header(lines: &[&str], mut i: usize, title: String) -> (CountingLogHeader, usize) {
     let re_header_field = Regex::new(r"^\t(.+):\s*(.+)$").unwrap();
     let re_package_name = Regex::new(r"^\t(\S+)$").unwrap();
