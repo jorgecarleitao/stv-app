@@ -6,11 +6,13 @@ use axum::{
 use chrono::Utc;
 use sea_orm::{ColumnTrait, DbConn, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
+use tracing;
 use utoipa::ToSchema;
 
 pub mod ballot_tokens;
 pub mod ballots;
 pub mod counting;
+pub mod election_results;
 pub mod elections;
 pub mod error;
 pub mod log;
@@ -185,19 +187,16 @@ async fn get_election(
     let election_type = parse_election_type(&election.election_type);
 
     let results = if has_ended && casted > 0 {
-        let election_for_counting = counting::to_election(
-            election.candidates.0.clone(),
-            election.num_seats as usize,
-            election_type,
-            ballots,
-        );
         Some(
-            counting::stv_droop(election_for_counting).map_err(|e| {
-                error::Error::Internal(format!(
-                    "STV counting failed for {}: {:?}",
-                    election_uuid, e
-                ))
-            })?,
+            get_or_compute_result(
+                &state.db,
+                &election_uuid,
+                election.candidates.0.clone(),
+                election.num_seats,
+                election_type,
+                ballots,
+            )
+            .await?,
         )
     } else {
         None
@@ -269,6 +268,65 @@ async fn simulate(
     counting::stv_droop(election.clone())
         .map_err(|e| error::Error::Internal(format!("Simulation failed: {:?}", e)))
         .map(Json)
+}
+
+async fn get_or_compute_result(
+    db: &DbConn,
+    election_uuid: &str,
+    candidates: Vec<String>,
+    num_seats: u32,
+    election_type: counting::ElectionType,
+    ballots: Vec<counting::Ballot>,
+) -> Result<counting::ElectionResult, error::Error> {
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+
+    let cached = election_results::Entity::find_by_id(election_uuid)
+        .one(db)
+        .await
+        .map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to query election_results for {}: {}",
+                election_uuid, e
+            ))
+        })?;
+
+    if let Some(stored) = cached {
+        return serde_json::from_value(stored.result).map_err(|e| {
+            error::Error::Internal(format!(
+                "Failed to deserialize stored result for {}: {}",
+                election_uuid, e
+            ))
+        });
+    }
+
+    let election = counting::to_election(candidates, num_seats as usize, election_type, ballots);
+    let result = counting::stv_droop(election).map_err(|e| {
+        error::Error::Internal(format!(
+            "STV counting failed for {}: {:?}",
+            election_uuid, e
+        ))
+    })?;
+
+    let result_value = serde_json::to_value(&result).map_err(|e| {
+        error::Error::Internal(format!(
+            "Failed to serialize result for {}: {}",
+            election_uuid, e
+        ))
+    })?;
+
+    let _ = election_results::ActiveModel {
+        election_id: Set(election_uuid.to_owned()),
+        result: Set(result_value),
+        computed_at: Set(Utc::now()),
+    }
+    .insert(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to persist results for {}: {}", election_uuid, e);
+        e
+    });
+
+    Ok(result)
 }
 
 pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
@@ -389,9 +447,7 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
         )
         .route(
             "/swagger-ui",
-            get(|| async {
-                axum::response::Html(include_str!("swagger-ui.html"))
-            }),
+            get(|| async { axum::response::Html(include_str!("swagger-ui.html")) }),
         )
         .with_state(state)
         .fallback_service(static_dir)

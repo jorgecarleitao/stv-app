@@ -5,6 +5,7 @@ mod m20250102_000002_create_ballots;
 mod m20250102_000003_create_ballot_tokens;
 mod m20250126_000001_add_ordered_seats;
 mod m20250715_000001_add_election_type;
+mod m20250716_000001_create_election_results;
 
 pub struct Migrator;
 
@@ -17,6 +18,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250102_000003_create_ballot_tokens::Migration),
             Box::new(m20250126_000001_add_ordered_seats::Migration),
             Box::new(m20250715_000001_add_election_type::Migration),
+            Box::new(m20250716_000001_create_election_results::Migration),
         ]
     }
 }
