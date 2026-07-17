@@ -175,6 +175,8 @@ fn pairwise_order(
 }
 
 pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
+    use num::BigInt;
+    use stv_rs::arithmetic::BigFixedDecimal9;
     use stv_rs::types::{Ballot, Candidate, Election};
 
     let mut log = Vec::new();
@@ -199,8 +201,8 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
         .build();
 
     let mut result = stv_rs::meek::stv_droop::<
-        stv_rs::arithmetic::Integer64,
-        stv_rs::arithmetic::FixedDecimal9,
+        BigInt,
+        BigFixedDecimal9,
     >(
         &mut log,
         &stv_election,
