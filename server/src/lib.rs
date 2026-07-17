@@ -15,6 +15,7 @@ pub mod counting;
 pub mod election_results;
 pub mod elections;
 pub mod error;
+pub mod export;
 pub mod log;
 
 /// ElectionConfig - what gets sent to the API (no sensitive info)
@@ -270,7 +271,23 @@ async fn simulate(
         .map(Json)
 }
 
-async fn get_or_compute_result(
+#[axum::debug_handler]
+async fn export_election(
+    Path(election_uuid): Path<String>,
+    State(state): State<AppState>,
+) -> Result<axum::response::Response, error::Error> {
+    let bytes = export::build_export_zip(&state.db, &election_uuid).await?;
+    let filename = format!("election-export-{}.zip", election_uuid);
+    let disposition = format!("attachment; filename=\"{}\"", filename);
+    let response = axum::response::Response::builder()
+        .header(axum::http::header::CONTENT_TYPE, "application/zip")
+        .header(axum::http::header::CONTENT_DISPOSITION, &disposition)
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| error::Error::Internal(format!("Failed to build response: {}", e)))?;
+    Ok(response)
+}
+
+pub(crate) async fn get_or_compute_result(
     db: &DbConn,
     election_uuid: &str,
     candidates: Vec<String>,
@@ -435,6 +452,10 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
         .route(
             "/{election_id}/tokens/{token_id}/redeem",
             post(ballot_tokens::handlers::redeem_token),
+        )
+        .route(
+            "/{election_id}/export",
+            get(export_election),
         );
 
     Ok(Router::new()

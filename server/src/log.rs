@@ -242,14 +242,17 @@ pub fn parse_log(raw: &str) -> CountingLog {
     }
 }
 
-/// Re-order candidate_counts in each action to match the original candidate position order.
-pub fn sort_candidate_counts(log: &mut CountingLog, candidate_order: &[String]) {
-    let position: std::collections::HashMap<&str, usize> = candidate_order
+pub(crate) fn build_position_map(candidate_order: &[String]) -> std::collections::HashMap<&str, usize> {
+    candidate_order
         .iter()
         .enumerate()
         .map(|(i, name)| (name.as_str(), i))
-        .collect();
+        .collect()
+}
 
+/// Re-order candidate_counts in each action to match the original candidate position order.
+pub fn sort_candidate_counts(log: &mut CountingLog, candidate_order: &[String]) {
+    let position = build_position_map(candidate_order);
     for round in &mut log.rounds {
         for action in &mut round.actions {
             action.candidate_counts.sort_by_key(|c| {
@@ -260,6 +263,15 @@ pub fn sort_candidate_counts(log: &mut CountingLog, candidate_order: &[String]) 
             });
         }
     }
+}
+
+/// Sort a single slice of candidate counts using a pre-built position map.
+/// Shared between log processing and export display.
+pub(crate) fn sort_candidate_count_slice(
+    counts: &mut [CountingLogCandidateCount],
+    position: &std::collections::HashMap<&str, usize>,
+) {
+    counts.sort_by_key(|c| position.get(c.name.as_str()).copied().unwrap_or(usize::MAX));
 }
 
 fn parse_header(lines: &[&str], mut i: usize, title: String) -> (CountingLogHeader, usize) {
