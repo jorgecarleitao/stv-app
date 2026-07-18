@@ -414,12 +414,6 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
         .allow_methods([Method::GET, Method::POST, Method::PUT])
         .allow_headers(Any);
 
-    let static_dir_path =
-        std::env::var("FRONTEND_STATIC_DIR").unwrap_or_else(|_| "app/static".to_string());
-    let static_dir = tower_http::services::ServeDir::new(&static_dir_path).fallback(
-        tower_http::services::ServeFile::new(format!("{static_dir_path}/index.html")),
-    );
-
     // Election routes nested under /api/elections
     let elections_router = Router::new()
         .route(
@@ -471,6 +465,5 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
             get(|| async { axum::response::Html(include_str!("swagger-ui.html")) }),
         )
         .with_state(state)
-        .fallback_service(static_dir)
         .layer(cors))
 }

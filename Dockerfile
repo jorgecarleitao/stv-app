@@ -22,11 +22,10 @@ FROM alpine:latest
 RUN addgroup -g 1000 appgroup && adduser -u 1000 -G appgroup -s /bin/sh -D appuser
 
 # Create data directory with proper permissions
-RUN mkdir -p /app/data /app/static && chown -R appuser:appgroup /app
+RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
-# Copy binary and frontend
+# Copy binary
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/cli /usr/local/bin/cli
-COPY --from=ghcr.io/jorgecarleitao/stv-app-frontend:main /app/dist /app/static
 
 RUN chown appuser:appgroup /usr/local/bin/cli
 
@@ -35,7 +34,6 @@ WORKDIR /app/data
 
 # Set default environment variables
 ENV DATABASE_URL="sqlite:///app/data/elections.db?mode=rwc"
-ENV FRONTEND_STATIC_DIR="/app/static"
 
 EXPOSE 8080
 

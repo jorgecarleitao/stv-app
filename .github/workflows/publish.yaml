@@ -35,11 +35,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull frontend
-        run: |
-          docker pull ghcr.io/jorgecarleitao/stv-app-frontend:main
-          docker pull ghcr.io/jorgecarleitao/stv-app:main
-
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v6

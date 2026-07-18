@@ -71,7 +71,6 @@ docker run --rm -p 8080:8080 \
 
 - `DATABASE_URL` — SQLite connection string (default in container: `sqlite:///app/data/elections.db`)
 - `RUST_LOG` — Log level (default: `info`)
-- `FRONTEND_STATIC_DIR` — Path to frontend static files (default in container: `/app/static`)
 
 ## Development
 
