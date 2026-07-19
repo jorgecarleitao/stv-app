@@ -354,7 +354,7 @@ async fn simulate(
     }
 
     counting::stv_droop(election.clone())
-        .map_err(|e| error::Error::Internal(format!("Simulation failed: {:?}", e)))
+        .map_err(error::Error::BadRequest)
         .map(Json)
 }
 

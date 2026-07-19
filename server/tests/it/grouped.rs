@@ -143,7 +143,7 @@ async fn test_grouped_election_seat_mismatch_rejected() -> Result<(), String> {
 
     assert_eq!(
         sim_resp.status_code(),
-        500,
+        400,
         "Should reject group seats not matching total seats"
     );
 
@@ -152,31 +152,29 @@ async fn test_grouped_election_seat_mismatch_rejected() -> Result<(), String> {
 
 #[tokio::test]
 async fn test_grouped_election_empty_group_rejected() -> Result<(), String> {
-    let db = setup_db().await?;
-    let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let (server, _db) = make_server().await?;
 
     let sim_resp = server
         .post("/api/simulate")
         .json(&json!({
-            "candidates": ["Alice"],
-            "seats": 1,
+            "candidates": ["Alice", "Bob"],
+            "seats": 2,
             "election_type": "stv-md-grouped",
             "groups": [
                 { "name": "Group A", "seats": 1 },
-                { "name": "Group B", "seats": 0 }
+                { "name": "Group B", "seats": 1 }
             ],
-            "candidate_groups": ["Group A"],
+            "candidate_groups": ["Group A", "Group A"],
             "ballots": [
-                { "votes": 10, "ranks": [0] }
+                { "votes": 10, "ranks": [0, 1] }
             ]
         }))
         .await;
 
     assert_eq!(
         sim_resp.status_code(),
-        500,
-        "Should reject group with no candidates"
+        400,
+        "Should reject group with no candidates assigned"
     );
 
     Ok(())
