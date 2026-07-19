@@ -58,6 +58,8 @@ pub async fn build_export_zip(
                 election.num_seats,
                 election_type,
                 ballots_for_counting,
+                election.groups.0.clone(),
+                election.candidate_groups.0.clone(),
             )
             .await?,
         )
@@ -123,10 +125,12 @@ Election configuration and metadata in JSON format.
 - `description` — Optional description
 - `candidates` — List of candidate names
 - `seats` — Number of seats to fill
-- `election_type` — Voting algorithm used (`stv-md` or `stv-md-coperland`)
+- `election_type` — Voting algorithm used (`stv-md`, `stv-md-coperland`, or `stv-md-grouped`)
 - `start_time` / `end_time` — Election period (ISO 8601)
 - `number_of_ballots` — Total number of ballot tokens issued
 - `ballot_ids` — List of all ballot IDs (visible after election ends)
+- `groups` — (Grouped elections only) Group definitions with name and seat count
+- `candidate_groups` — (Grouped elections only) Group assignment per candidate
 
 ### `ballots.json`
 All cast ballots with their ranking preferences.
@@ -135,11 +139,13 @@ All cast ballots with their ranking preferences.
 
 ### `results.json`
 Full election results including elected candidates, pairwise comparison matrix (Copeland), and the complete structured counting log.
-- `type` — Result type (`stv-md` or `stv-md-coperland`)
+- `type` — Result type (`stv-md`, `stv-md-coperland`, or `stv-md-grouped`)
 - `elected` — List of elected candidates in order
 - `order` — (Copeland only) Final candidate ranking by Copeland score
 - `pairwise_matrix` — (Copeland only) Head-to-head comparison matrix
-- `log` — Structured counting log with per-round actions, candidate counts, and stats
+- `log` — (Non-grouped only) Structured counting log with per-round actions, candidate counts, and stats
+- `groups` — (Grouped only) Group configuration
+- `group_results` — (Grouped only) Per-group results with sub-election, log, and elected candidates
 
 ### `report.html`
 Human-readable election report. Self-contained HTML (no external dependencies). Open in any browser and print to PDF if desired.
@@ -183,6 +189,8 @@ struct ExportElectionJson {
     end_time: DateTime<Utc>,
     number_of_ballots: usize,
     ballot_ids: Option<Vec<String>>,
+    groups: Vec<crate::counting::GroupConfig>,
+    candidate_groups: Vec<String>,
 }
 
 fn election_config_json(
@@ -200,6 +208,8 @@ fn election_config_json(
         end_time: election.end_time,
         number_of_ballots: tokens.len(),
         ballot_ids: Some(ballots.iter().map(|b| b.id.clone()).collect()),
+        groups: election.groups.0.clone(),
+        candidate_groups: election.candidate_groups.0.clone(),
     }
 }
 
@@ -272,56 +282,117 @@ fn generate_report_html(
     let candidates_html: String = candidates
         .iter()
         .enumerate()
-        .map(|(i, c)| format!("<li><strong>{}</strong> (index {})</li>", html_escape(c), i))
+        .map(|(i, c)| {
+            let group_info = election.candidate_groups.0.get(i)
+                .map(|g| format!(" &mdash; <em>{}</em>", html_escape(g)))
+                .unwrap_or_default();
+            format!("<li><strong>{}</strong> (index {}){}</li>", html_escape(c), i, group_info)
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
-    let mut elected_rows = String::new();
-    for (i, e) in result.elected().iter().enumerate() {
-        elected_rows.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td></tr>\n",
-            i + 1,
-            html_escape(&e.candidate)
-        ));
-    }
+    let mut results_html = String::new();
 
-    let mut pairwise_html = String::new();
-    if let Some(matrix) = result.pairwise_matrix() {
-        pairwise_html.push_str("<h2>Pairwise Comparison Matrix (Copeland)</h2>\n");
-        pairwise_html.push_str("<table>\n<tr><th></th>");
-        for c in candidates {
-            pairwise_html.push_str(&format!("<th>{}</th>", html_escape(c)));
+    if let Some(group_results) = result.group_results() {
+        // Grouped results: show per-group sections
+        let mut groups_info = String::new();
+        if !election.groups.0.is_empty() {
+            groups_info.push_str("<h2>Groups</h2>\n<ul>\n");
+            for g in &election.groups.0 {
+                groups_info.push_str(&format!(
+                    "<li><strong>{}</strong> &mdash; {} seats</li>\n",
+                    html_escape(&g.name), g.seats
+                ));
+            }
+            groups_info.push_str("</ul>\n");
         }
-        pairwise_html.push_str("</tr>\n");
-        for (i, row) in matrix.iter().enumerate() {
-            pairwise_html.push_str(&format!("<tr><th>{}</th>", html_escape(&candidates[i])));
-            for (j, val) in row.iter().enumerate() {
-                let cls = if i == j {
-                    " class=\"diag\""
-                } else if *val > matrix[j][i] {
-                    " class=\"win\""
-                } else if *val < matrix[j][i] {
-                    " class=\"loss\""
-                } else {
-                    ""
-                };
-                pairwise_html.push_str(&format!("<td{}>{}</td>", cls, val));
+        results_html.push_str(&groups_info);
+
+        for gr in group_results {
+            results_html.push_str(&format!(
+                "<h2>Group: {} ({} seats)</h2>\n",
+                html_escape(&gr.group), gr.seats
+            ));
+
+            // Elected from this group
+            let mut gr_elected_rows = String::new();
+            for (i, e) in gr.elected.iter().enumerate() {
+                gr_elected_rows.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td></tr>\n",
+                    i + 1,
+                    html_escape(&e.candidate)
+                ));
+            }
+            results_html.push_str(&format!(
+                "<h3>Elected</h3>\n<table>\n<tr><th>Seat</th><th>Candidate</th></tr>\n{}</table>\n",
+                gr_elected_rows
+            ));
+
+            // Sub-election candidates for this group
+            let gr_candidates: String = gr.election.candidates().iter()
+                .enumerate()
+                .map(|(i, c)| format!("<li><strong>{}</strong> (index {})</li>", html_escape(c), i))
+                .collect::<Vec<_>>()
+                .join("\n");
+            results_html.push_str("<h3>Group Candidates</h3>\n<ul>");
+            results_html.push_str(&gr_candidates);
+            results_html.push_str("</ul>\n");
+
+            // Counting log for this group
+            results_html.push_str(&format!("<h3>Counting Log</h3>\n{}", generate_log_html(&gr.log, gr.election.candidates())));
+        }
+    } else {
+        // Non-grouped results
+        let mut elected_rows = String::new();
+        for (i, e) in result.elected().iter().enumerate() {
+            elected_rows.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>\n",
+                i + 1,
+                html_escape(&e.candidate)
+            ));
+        }
+
+        let elected_table = if result.elected().is_empty() {
+            "<p>No candidates were elected.</p>\n".to_string()
+        } else {
+            format!(
+                "<table>\n<tr><th>Seat</th><th>Candidate</th></tr>\n{}</table>\n",
+                elected_rows
+            )
+        };
+
+        results_html.push_str(&elected_table);
+
+        let mut pairwise_html = String::new();
+        if let Some(matrix) = result.pairwise_matrix() {
+            pairwise_html.push_str("<h2>Pairwise Comparison Matrix (Copeland)</h2>\n");
+            pairwise_html.push_str("<table>\n<tr><th></th>");
+            for c in candidates {
+                pairwise_html.push_str(&format!("<th>{}</th>", html_escape(c)));
             }
             pairwise_html.push_str("</tr>\n");
+            for (i, row) in matrix.iter().enumerate() {
+                pairwise_html.push_str(&format!("<tr><th>{}</th>", html_escape(&candidates[i])));
+                for (j, val) in row.iter().enumerate() {
+                    let cls = if i == j {
+                        " class=\"diag\""
+                    } else if *val > matrix[j][i] {
+                        " class=\"win\""
+                    } else if *val < matrix[j][i] {
+                        " class=\"loss\""
+                    } else {
+                        ""
+                    };
+                    pairwise_html.push_str(&format!("<td{}>{}</td>", cls, val));
+                }
+                pairwise_html.push_str("</tr>\n");
+            }
+            pairwise_html.push_str("</table>\n");
         }
-        pairwise_html.push_str("</table>\n");
+        results_html.push_str(&pairwise_html);
+
+        results_html.push_str(&format!("<h2>Counting Log</h2>\n{}", generate_log_html(result.log(), candidates)));
     }
-
-    let log_html = generate_log_html(result.log(), candidates);
-
-    let elected_table = if result.elected().is_empty() {
-        "<p>No candidates were elected.</p>\n".to_string()
-    } else {
-        format!(
-            "<table>\n<tr><th>Seat</th><th>Candidate</th></tr>\n{}</table>\n",
-            elected_rows
-        )
-    };
 
     format!(
         "<!DOCTYPE html>
@@ -334,6 +405,7 @@ fn generate_report_html(
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; margin: 2em; color: #1a1a1a; background: #fff; line-height: 1.5; }}
   h1 {{ border-bottom: 2px solid #333; padding-bottom: 0.3em; }}
   h2 {{ margin-top: 1.5em; border-bottom: 1px solid #ccc; padding-bottom: 0.2em; }}
+  h3 {{ margin-top: 1.2em; color: #444; }}
   .desc {{ font-size: 1.1em; color: #555; }}
   table {{ border-collapse: collapse; margin: 1em 0; min-width: 300px; }}
   th, td {{ border: 1px solid #ccc; padding: 0.5em 0.8em; text-align: left; }}
@@ -370,10 +442,7 @@ fn generate_report_html(
 <ul>{candidates_html}</ul>
 
 <h2>Results</h2>
-{elected_table}
-{pairwise_html}
-<h2>Counting Log</h2>
-{log_html}
+{results_html}
 </body>
 </html>",
         title = title,
@@ -384,9 +453,7 @@ fn generate_report_html(
         start = election.start_time.to_rfc3339(),
         end = election.end_time.to_rfc3339(),
         candidates_html = candidates_html,
-        elected_table = elected_table,
-        pairwise_html = pairwise_html,
-        log_html = log_html,
+        results_html = results_html,
     )
 }
 

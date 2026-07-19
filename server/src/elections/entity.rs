@@ -2,8 +2,16 @@ use chrono::{DateTime, Utc};
 use sea_orm::{FromJsonQueryResult, prelude::*};
 use serde::{Deserialize, Serialize};
 
+use crate::counting::GroupConfig;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult)]
 pub struct Candidates(pub Vec<String>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult)]
+pub struct Groups(pub Vec<GroupConfig>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult)]
+pub struct CandidateGroups(pub Vec<String>);
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "elections")]
@@ -18,6 +26,8 @@ pub struct Model {
     pub election_type: String,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
+    pub groups: Groups,
+    pub candidate_groups: CandidateGroups,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

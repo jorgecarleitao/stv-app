@@ -30,6 +30,7 @@ fn election_type_to_string(t: ElectionType) -> String {
     match t {
         ElectionType::StvMd => "stv-md".to_string(),
         ElectionType::StvMdCoperland => "stv-md-coperland".to_string(),
+        ElectionType::StvMdGrouped => "stv-md-grouped".to_string(),
     }
 }
 
@@ -37,7 +38,52 @@ fn parse_election_type(s: &str) -> Result<ElectionType, Error> {
     match s {
         "stv-md" => Ok(ElectionType::StvMd),
         "stv-md-coperland" => Ok(ElectionType::StvMdCoperland),
+        "stv-md-grouped" => Ok(ElectionType::StvMdGrouped),
         _ => Err(Error::Internal(format!("Invalid election_type '{}'", s))),
+    }
+}
+
+fn build_election_response(model: entity::Model, is_locked: bool) -> Result<ElectionResponse, Error> {
+    let election_type = parse_election_type(&model.election_type)?;
+    let common = |uuid, admin_uuid, title, description, candidates, num_seats, start_time, end_time| {
+        (uuid, admin_uuid, title, description, candidates, num_seats, start_time, end_time)
+    };
+    let (uuid, admin_uuid, title, description, candidates, num_seats, start_time, end_time) = common(
+        model.uuid, model.admin_uuid, model.title, model.description,
+        model.candidates.0, model.num_seats, model.start_time.into(), model.end_time.into(),
+    );
+
+    match election_type {
+        ElectionType::StvMd => Ok(ElectionResponse::StvMd {
+            uuid, admin_uuid, title, description, candidates, num_seats,
+            start_time, end_time, is_locked,
+        }),
+        ElectionType::StvMdCoperland => Ok(ElectionResponse::StvMdCoperland {
+            uuid, admin_uuid, title, description, candidates, num_seats,
+            start_time, end_time, is_locked,
+        }),
+        ElectionType::StvMdGrouped => Ok(ElectionResponse::StvMdGrouped {
+            uuid, admin_uuid, title, description, candidates, num_seats,
+            start_time, end_time, is_locked,
+            groups: model.groups.0,
+            candidate_groups: model.candidate_groups.0,
+        }),
+    }
+}
+
+fn model_from_request(req: &CreateElectionRequest, uuid: String, admin_uuid: String) -> entity::ActiveModel {
+    entity::ActiveModel {
+        uuid: Set(uuid),
+        admin_uuid: Set(admin_uuid),
+        title: Set(req.title().to_string()),
+        description: Set(req.description().clone()),
+        candidates: Set(entity::Candidates(req.candidates().to_vec())),
+        num_seats: Set(req.num_seats()),
+        election_type: Set(election_type_to_string(req.election_type())),
+        start_time: Set(*req.start_time()),
+        end_time: Set(*req.end_time()),
+        groups: Set(entity::Groups(req.groups().to_vec())),
+        candidate_groups: Set(entity::CandidateGroups(req.candidate_groups().to_vec())),
     }
 }
 
@@ -59,35 +105,15 @@ pub async fn create_election(
     let uuid = Uuid::new_v4().to_string();
     let admin_uuid = Uuid::new_v4().to_string();
 
-    let election = entity::ActiveModel {
-        uuid: Set(uuid),
-        admin_uuid: Set(admin_uuid),
-        title: Set(req.title),
-        description: Set(req.description),
-        candidates: Set(entity::Candidates(req.candidates)),
-        num_seats: Set(req.num_seats),
-        election_type: Set(election_type_to_string(req.election_type)),
-        start_time: Set(req.start_time.into()),
-        end_time: Set(req.end_time.into()),
-    };
+    let election = model_from_request(&req, uuid, admin_uuid);
 
     let inserted = election
         .insert(&state.db)
         .await
         .map_err(|e| Error::Internal(format!("Failed to create election: {}", e)))?;
 
-    Ok(Json(ElectionResponse {
-        uuid: inserted.uuid,
-        admin_uuid: inserted.admin_uuid,
-        title: inserted.title,
-        description: inserted.description,
-        candidates: inserted.candidates.0,
-        num_seats: inserted.num_seats,
-        election_type: parse_election_type(&inserted.election_type)?,
-        start_time: inserted.start_time.into(),
-        end_time: inserted.end_time.into(),
-        is_locked: false, // New elections are never locked
-    }))
+    build_election_response(inserted, false)
+        .map(Json)
 }
 
 #[utoipa::path(
@@ -119,18 +145,8 @@ pub async fn get_election_by_admin(
 
     let is_locked = is_election_locked(&state.db, &election_id).await?;
 
-    Ok(Json(ElectionResponse {
-        uuid: election.uuid,
-        admin_uuid: election.admin_uuid,
-        title: election.title,
-        description: election.description,
-        candidates: election.candidates.0,
-        num_seats: election.num_seats,
-        election_type: parse_election_type(&election.election_type)?,
-        start_time: election.start_time.into(),
-        end_time: election.end_time.into(),
-        is_locked,
-    }))
+    build_election_response(election, is_locked)
+        .map(Json)
 }
 
 #[utoipa::path(
@@ -170,9 +186,9 @@ pub async fn update_election_by_admin(
         .ok_or(Error::NotFound)?;
 
     // Check if title, description, or candidates are being modified
-    let title_changed = election.title != req.title;
-    let description_changed = election.description != req.description;
-    let candidates_changed = election.candidates.0 != req.candidates;
+    let title_changed = election.title != req.title();
+    let description_changed = election.description != req.description().clone();
+    let candidates_changed = election.candidates.0 != req.candidates();
 
     let is_locked = is_election_locked(&txn, &election_id).await?;
 
@@ -183,13 +199,15 @@ pub async fn update_election_by_admin(
     }
 
     let mut election_active: entity::ActiveModel = election.into();
-    election_active.title = Set(req.title);
-    election_active.description = Set(req.description);
-    election_active.candidates = Set(entity::Candidates(req.candidates));
-    election_active.num_seats = Set(req.num_seats);
-    election_active.election_type = Set(election_type_to_string(req.election_type));
-    election_active.start_time = Set(req.start_time.into());
-    election_active.end_time = Set(req.end_time.into());
+    election_active.title = Set(req.title().to_string());
+    election_active.description = Set(req.description().clone());
+    election_active.candidates = Set(entity::Candidates(req.candidates().to_vec()));
+    election_active.num_seats = Set(req.num_seats());
+    election_active.election_type = Set(election_type_to_string(req.election_type()));
+    election_active.start_time = Set(*req.start_time());
+    election_active.end_time = Set(*req.end_time());
+    election_active.groups = Set(entity::Groups(req.groups().to_vec()));
+    election_active.candidate_groups = Set(entity::CandidateGroups(req.candidate_groups().to_vec()));
 
     let updated = election_active
         .update(&txn)
@@ -200,16 +218,6 @@ pub async fn update_election_by_admin(
         .await
         .map_err(|e| Error::Internal(format!("Failed to commit transaction: {}", e)))?;
 
-    Ok(Json(ElectionResponse {
-        uuid: updated.uuid,
-        admin_uuid: updated.admin_uuid,
-        title: updated.title,
-        description: updated.description,
-        candidates: updated.candidates.0,
-        num_seats: updated.num_seats,
-        election_type: parse_election_type(&updated.election_type)?,
-        start_time: updated.start_time.into(),
-        end_time: updated.end_time.into(),
-        is_locked,
-    }))
+    build_election_response(updated, is_locked)
+        .map(Json)
 }

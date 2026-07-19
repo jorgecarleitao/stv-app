@@ -20,29 +20,92 @@ pub mod log;
 
 /// ElectionConfig - what gets sent to the API (no sensitive info)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct ElectionConfig {
-    /// Unique identifier for the election
-    pub id: String,
-    /// Title of the election
-    pub title: String,
-    /// Optional description providing additional details about the election
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// List of candidate names
-    pub candidates: Vec<String>,
-    /// Number of seats to be filled in the election
-    pub seats: u32,
-    /// Type of election algorithm
-    pub election_type: counting::ElectionType,
-    /// Election start time (ISO 8601 format)
-    pub start_time: chrono::DateTime<Utc>,
-    /// Election end time (ISO 8601 format)
-    pub end_time: chrono::DateTime<Utc>,
-    /// Total number of ballot tokens issued for this election
-    pub number_of_ballots: usize,
-    /// List of ballot IDs (only visible after election ends)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ballots: Option<Vec<String>>,
+#[serde(tag = "election_type", rename_all = "kebab-case")]
+pub enum ElectionConfig {
+    StvMd {
+        id: String,
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        candidates: Vec<String>,
+        seats: u32,
+        start_time: chrono::DateTime<Utc>,
+        end_time: chrono::DateTime<Utc>,
+        number_of_ballots: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ballots: Option<Vec<String>>,
+    },
+    StvMdCoperland {
+        id: String,
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        candidates: Vec<String>,
+        seats: u32,
+        start_time: chrono::DateTime<Utc>,
+        end_time: chrono::DateTime<Utc>,
+        number_of_ballots: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ballots: Option<Vec<String>>,
+    },
+    StvMdGrouped {
+        id: String,
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        candidates: Vec<String>,
+        seats: u32,
+        start_time: chrono::DateTime<Utc>,
+        end_time: chrono::DateTime<Utc>,
+        number_of_ballots: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ballots: Option<Vec<String>>,
+        groups: Vec<counting::GroupConfig>,
+        candidate_groups: Vec<String>,
+    },
+}
+
+impl ElectionConfig {
+    pub fn id(&self) -> &str {
+        match self {
+            ElectionConfig::StvMd { id, .. } => id,
+            ElectionConfig::StvMdCoperland { id, .. } => id,
+            ElectionConfig::StvMdGrouped { id, .. } => id,
+        }
+    }
+    pub fn candidates(&self) -> &[String] {
+        match self {
+            ElectionConfig::StvMd { candidates, .. } => candidates,
+            ElectionConfig::StvMdCoperland { candidates, .. } => candidates,
+            ElectionConfig::StvMdGrouped { candidates, .. } => candidates,
+        }
+    }
+    pub fn seats(&self) -> u32 {
+        match self {
+            ElectionConfig::StvMd { seats, .. } => *seats,
+            ElectionConfig::StvMdCoperland { seats, .. } => *seats,
+            ElectionConfig::StvMdGrouped { seats, .. } => *seats,
+        }
+    }
+    pub fn ballots(&self) -> &Option<Vec<String>> {
+        match self {
+            ElectionConfig::StvMd { ballots, .. } => ballots,
+            ElectionConfig::StvMdCoperland { ballots, .. } => ballots,
+            ElectionConfig::StvMdGrouped { ballots, .. } => ballots,
+        }
+    }
+    pub fn groups(&self) -> &[counting::GroupConfig] {
+        match self {
+            ElectionConfig::StvMdGrouped { groups, .. } => groups,
+            _ => &[],
+        }
+    }
+    pub fn candidate_groups(&self) -> &[String] {
+        match self {
+            ElectionConfig::StvMdGrouped { candidate_groups, .. } => candidate_groups,
+            _ => &[],
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -63,9 +126,10 @@ pub struct ElectionState {
     pub results: Option<counting::ElectionResult>,
 }
 
-fn parse_election_type(s: &str) -> counting::ElectionType {
+pub fn parse_election_type(s: &str) -> counting::ElectionType {
     match s {
         "stv-md-coperland" => counting::ElectionType::StvMdCoperland,
+        "stv-md-grouped" => counting::ElectionType::StvMdGrouped,
         _ => counting::ElectionType::StvMd,
     }
 }
@@ -103,17 +167,28 @@ async fn list_elections(
 
     let configs: Vec<ElectionConfig> = elections
         .into_iter()
-        .map(|e| ElectionConfig {
-            id: e.uuid,
-            title: e.title,
-            description: e.description,
-            candidates: e.candidates.0,
-            seats: e.num_seats,
-            election_type: parse_election_type(&e.election_type),
-            start_time: e.start_time,
-            end_time: e.end_time,
-            number_of_ballots: 0, // Would need to query tokens to get accurate count
-            ballots: None,
+        .map(|e| {
+            let common = |id, title, description, candidates, seats, start_time, end_time| {
+                (id, title, description, candidates, seats, start_time, end_time)
+            };
+            let (id, title, description, candidates, seats, start_time, end_time) = common(
+                e.uuid, e.title, e.description, e.candidates.0, e.num_seats, e.start_time, e.end_time,
+            );
+            match parse_election_type(&e.election_type) {
+                counting::ElectionType::StvMd => ElectionConfig::StvMd {
+                    id, title, description, candidates, seats, start_time, end_time,
+                    number_of_ballots: 0, ballots: None,
+                },
+                counting::ElectionType::StvMdCoperland => ElectionConfig::StvMdCoperland {
+                    id, title, description, candidates, seats, start_time, end_time,
+                    number_of_ballots: 0, ballots: None,
+                },
+                counting::ElectionType::StvMdGrouped => ElectionConfig::StvMdGrouped {
+                    id, title, description, candidates, seats, start_time, end_time,
+                    number_of_ballots: 0, ballots: None,
+                    groups: e.groups.0, candidate_groups: e.candidate_groups.0,
+                },
+            }
         })
         .collect();
 
@@ -196,6 +271,8 @@ async fn get_election(
                 election.num_seats,
                 election_type,
                 ballots,
+                election.groups.0.clone(),
+                election.candidate_groups.0.clone(),
             )
             .await?,
         )
@@ -204,20 +281,30 @@ async fn get_election(
     };
 
     // Convert database election to ElectionConfig format
-    let election_config = ElectionConfig {
-        id: election.uuid,
-        title: election.title,
-        description: election.description,
-        candidates: election.candidates.0.clone(),
-        seats: election.num_seats,
-        election_type,
-        start_time: election.start_time,
-        end_time: election.end_time,
-        number_of_ballots: potential_voters,
-        ballots: if has_ended {
-            Some(all_ballots.into_iter().map(|b| b.id).collect())
-        } else {
-            None
+    let ballots_opt = if has_ended {
+        Some(all_ballots.into_iter().map(|b| b.id).collect())
+    } else {
+        None
+    };
+    let election_config = match election_type {
+        counting::ElectionType::StvMd => ElectionConfig::StvMd {
+            id: election.uuid, title: election.title, description: election.description,
+            candidates: election.candidates.0.clone(), seats: election.num_seats,
+            start_time: election.start_time, end_time: election.end_time,
+            number_of_ballots: potential_voters, ballots: ballots_opt,
+        },
+        counting::ElectionType::StvMdCoperland => ElectionConfig::StvMdCoperland {
+            id: election.uuid, title: election.title, description: election.description,
+            candidates: election.candidates.0.clone(), seats: election.num_seats,
+            start_time: election.start_time, end_time: election.end_time,
+            number_of_ballots: potential_voters, ballots: ballots_opt,
+        },
+        counting::ElectionType::StvMdGrouped => ElectionConfig::StvMdGrouped {
+            id: election.uuid, title: election.title, description: election.description,
+            candidates: election.candidates.0.clone(), seats: election.num_seats,
+            start_time: election.start_time, end_time: election.end_time,
+            number_of_ballots: potential_voters, ballots: ballots_opt,
+            groups: election.groups.0.clone(), candidate_groups: election.candidate_groups.0.clone(),
         },
     };
 
@@ -244,20 +331,20 @@ async fn get_election(
 async fn simulate(
     Json(election): Json<counting::Election>,
 ) -> Result<Json<counting::ElectionResult>, error::Error> {
-    if election.candidates.is_empty() {
+    if election.candidates().is_empty() {
         return Err(error::Error::BadRequest(
             "Candidates list cannot be empty".to_string(),
         ));
     }
-    if election.seats == 0 || election.seats > election.candidates.len() {
+    if election.seats() == 0 || election.seats() > election.candidates().len() {
         return Err(error::Error::BadRequest(
             "Invalid number of seats".to_string(),
         ));
     }
-    for ballot in &election.ballots {
+    for ballot in election.ballots() {
         for &rank in &ballot.ranks {
             if let Some(idx) = rank {
-                if idx >= election.candidates.len() {
+                if idx >= election.candidates().len() {
                     return Err(error::Error::BadRequest(
                         "Invalid candidate index".to_string(),
                     ));
@@ -294,6 +381,8 @@ pub(crate) async fn get_or_compute_result(
     num_seats: u32,
     election_type: counting::ElectionType,
     ballots: Vec<counting::Ballot>,
+    groups: Vec<counting::GroupConfig>,
+    candidate_groups: Vec<String>,
 ) -> Result<counting::ElectionResult, error::Error> {
     use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 
@@ -316,7 +405,14 @@ pub(crate) async fn get_or_compute_result(
         });
     }
 
-    let election = counting::to_election(candidates, num_seats as usize, election_type, ballots);
+    let election = counting::to_election_with_groups(
+        candidates,
+        num_seats as usize,
+        election_type,
+        ballots,
+        groups,
+        candidate_groups,
+    );
     let result = counting::stv_droop(election).map_err(|e| {
         error::Error::Internal(format!(
             "STV counting failed for {}: {:?}",
@@ -379,6 +475,8 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
                 counting::Election,
                 counting::ElectionResult,
                 counting::Elected,
+                counting::GroupConfig,
+                counting::GroupResult,
                 log::CountingLog,
                 log::CountingLogHeader,
                 log::CountingLogCandidate,

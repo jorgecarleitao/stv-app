@@ -147,7 +147,7 @@ async fn test_export_closed_election() -> Result<(), String> {
     let results_json = read_zip_entry(&mut archive, "results.json");
     let results_data: serde_json::Value =
         serde_json::from_str(&results_json).map_err(|e| e.to_string())?;
-    assert_eq!(results_data["type"], "StvMdCoperland");
+    assert_eq!(results_data["type"], "stv-md-coperland");
     assert_eq!(results_data["elected"].as_array().unwrap().len(), 1);
     assert_eq!(results_data["elected"][0]["candidate"], "Apple");
     assert!(results_data.get("log").is_some());

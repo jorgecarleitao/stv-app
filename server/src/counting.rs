@@ -8,6 +8,13 @@ use utoipa::ToSchema;
 pub enum ElectionType {
     StvMd,
     StvMdCoperland,
+    StvMdGrouped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct GroupConfig {
+    pub name: String,
+    pub seats: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -26,15 +33,68 @@ pub struct CombinedBallot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct Election {
-    /// List of candidate names
-    pub candidates: Vec<String>,
-    /// Number of seats to be filled
-    pub seats: usize,
-    /// Type of election algorithm to use
-    pub election_type: ElectionType,
-    /// List of ballots (may be combined for identical rankings)
-    pub ballots: Vec<CombinedBallot>,
+#[serde(tag = "election_type", rename_all = "kebab-case")]
+pub enum Election {
+    StvMd {
+        candidates: Vec<String>,
+        seats: usize,
+        ballots: Vec<CombinedBallot>,
+    },
+    StvMdCoperland {
+        candidates: Vec<String>,
+        seats: usize,
+        ballots: Vec<CombinedBallot>,
+    },
+    StvMdGrouped {
+        candidates: Vec<String>,
+        seats: usize,
+        ballots: Vec<CombinedBallot>,
+        groups: Vec<GroupConfig>,
+        candidate_groups: Vec<String>,
+    },
+}
+
+impl Election {
+    pub fn candidates(&self) -> &[String] {
+        match self {
+            Election::StvMd { candidates, .. } => candidates,
+            Election::StvMdCoperland { candidates, .. } => candidates,
+            Election::StvMdGrouped { candidates, .. } => candidates,
+        }
+    }
+    pub fn seats(&self) -> usize {
+        match self {
+            Election::StvMd { seats, .. } => *seats,
+            Election::StvMdCoperland { seats, .. } => *seats,
+            Election::StvMdGrouped { seats, .. } => *seats,
+        }
+    }
+    pub fn ballots(&self) -> &[CombinedBallot] {
+        match self {
+            Election::StvMd { ballots, .. } => ballots,
+            Election::StvMdCoperland { ballots, .. } => ballots,
+            Election::StvMdGrouped { ballots, .. } => ballots,
+        }
+    }
+    pub fn election_type(&self) -> ElectionType {
+        match self {
+            Election::StvMd { .. } => ElectionType::StvMd,
+            Election::StvMdCoperland { .. } => ElectionType::StvMdCoperland,
+            Election::StvMdGrouped { .. } => ElectionType::StvMdGrouped,
+        }
+    }
+    pub fn groups(&self) -> &[GroupConfig] {
+        match self {
+            Election::StvMdGrouped { groups, .. } => groups,
+            _ => &[],
+        }
+    }
+    pub fn candidate_groups(&self) -> &[String] {
+        match self {
+            Election::StvMdGrouped { candidate_groups, .. } => candidate_groups,
+            _ => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -46,27 +106,39 @@ pub struct Elected {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "type")]
+pub struct GroupResult {
+    /// Name of the group
+    pub group: String,
+    /// Number of seats allocated to this group
+    pub seats: usize,
+    /// Sub-election for this group (filtered candidates and ballots)
+    pub election: Election,
+    /// Detailed counting log for this group
+    pub log: crate::log::CountingLog,
+    /// Candidates elected from this group
+    pub elected: Vec<Elected>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ElectionResult {
     StvMd {
-        /// The election that was counted
         election: Election,
-        /// Detailed log of the counting process, parsed into structured data
         log: crate::log::CountingLog,
-        /// List of elected candidates in order
         elected: Vec<Elected>,
     },
     StvMdCoperland {
-        /// The election that was counted
         election: Election,
-        /// Detailed log of the counting process, parsed into structured data
         log: crate::log::CountingLog,
-        /// List of elected candidates in order
         elected: Vec<Elected>,
-        /// Map from candidate ID (as string) to their final position/order
         order: HashMap<String, usize>,
-        /// Pairwise comparison matrix showing head-to-head preferences between candidates
         pairwise_matrix: Vec<Vec<usize>>,
+    },
+    StvMdGrouped {
+        election: Election,
+        groups: Vec<GroupConfig>,
+        group_results: Vec<GroupResult>,
+        elected: Vec<Elected>,
     },
 }
 
@@ -75,6 +147,7 @@ impl ElectionResult {
         match self {
             ElectionResult::StvMd { election, .. } => election,
             ElectionResult::StvMdCoperland { election, .. } => election,
+            ElectionResult::StvMdGrouped { election, .. } => election,
         }
     }
 
@@ -82,6 +155,7 @@ impl ElectionResult {
         match self {
             ElectionResult::StvMd { elected, .. } => elected,
             ElectionResult::StvMdCoperland { elected, .. } => elected,
+            ElectionResult::StvMdGrouped { elected, .. } => elected,
         }
     }
 
@@ -89,6 +163,9 @@ impl ElectionResult {
         match self {
             ElectionResult::StvMd { log, .. } => log,
             ElectionResult::StvMdCoperland { log, .. } => log,
+            ElectionResult::StvMdGrouped { .. } => {
+                panic!("log() is not supported for grouped results; use group_results() instead")
+            }
         }
     }
 
@@ -96,6 +173,7 @@ impl ElectionResult {
         match self {
             ElectionResult::StvMd { .. } => None,
             ElectionResult::StvMdCoperland { order, .. } => Some(order),
+            ElectionResult::StvMdGrouped { .. } => None,
         }
     }
 
@@ -103,6 +181,14 @@ impl ElectionResult {
         match self {
             ElectionResult::StvMd { .. } => None,
             ElectionResult::StvMdCoperland { pairwise_matrix, .. } => Some(pairwise_matrix),
+            ElectionResult::StvMdGrouped { .. } => None,
+        }
+    }
+
+    pub fn group_results(&self) -> Option<&[GroupResult]> {
+        match self {
+            ElectionResult::StvMdGrouped { group_results, .. } => Some(group_results),
+            _ => None,
         }
     }
 }
@@ -125,7 +211,6 @@ fn pairwise_order(
     ballots: &[CombinedBallot],
     n_candidates: usize,
 ) -> (HashMap<String, usize>, Vec<Vec<usize>>) {
-    // Precompute rank arrays for each ballot
     let ballot_ranks: Vec<Vec<Option<usize>>> = ballots.iter().map(|b| b.ranks.clone()).collect();
 
     let mut scores = vec![0; n_candidates];
@@ -153,7 +238,6 @@ fn pairwise_order(
                 } else if let (None, Some(_)) = (r_i, r_j) {
                     j_beats_i_total += ballot.votes;
                 }
-                // both None = tie, ignore
             }
             matrix[i][j] = i_beats_j_total;
             if i_beats_j_total > j_beats_i_total {
@@ -162,11 +246,9 @@ fn pairwise_order(
         }
     }
 
-    // Sort: best score gets 0
     let mut idxs: Vec<usize> = (0..n_candidates).collect();
     idxs.sort_by_key(|&i| std::cmp::Reverse(scores[i]));
 
-    // Map candidate id to order
     let mut result = HashMap::new();
     for (order, cand) in idxs.into_iter().enumerate() {
         result.insert(cand.to_string(), order);
@@ -175,6 +257,13 @@ fn pairwise_order(
 }
 
 pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
+    match &election {
+        Election::StvMdGrouped { .. } => stv_droop_grouped(election),
+        _ => stv_droop_single(election),
+    }
+}
+
+fn stv_droop_single(election: Election) -> Result<ElectionResult, String> {
     use num::BigInt;
     use stv_rs::arithmetic::BigFixedDecimal9;
     use stv_rs::types::{Ballot, Candidate, Election};
@@ -182,13 +271,13 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     let mut log = Vec::new();
 
     let candidates = election
-        .candidates
+        .candidates()
         .iter()
         .map(|c| Candidate::new(c, false))
         .collect::<Vec<_>>();
 
     let ballots = election
-        .ballots
+        .ballots()
         .iter()
         .map(|b| Ballot::new(b.votes, ranks_to_order(&b.ranks)))
         .collect::<Vec<_>>();
@@ -196,7 +285,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     let stv_election = Election::builder()
         .title("")
         .candidates(candidates)
-        .num_seats(election.seats)
+        .num_seats(election.seats())
         .ballots(ballots)
         .build();
 
@@ -217,15 +306,15 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
     .unwrap();
 
     let mut counting_log = crate::log::parse_log(&String::from_utf8(log).unwrap());
-    crate::log::sort_candidate_counts(&mut counting_log, &election.candidates);
+    crate::log::sort_candidate_counts(&mut counting_log, election.candidates());
 
-    match election.election_type {
+    match election.election_type() {
         ElectionType::StvMd => {
             let elected = result
                 .elected
                 .into_iter()
                 .map(|e| Elected {
-                    candidate: election.candidates[e].clone(),
+                    candidate: election.candidates()[e].clone(),
                     id: e,
                 })
                 .collect();
@@ -238,7 +327,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
         }
         ElectionType::StvMdCoperland => {
             let (order, pairwise_matrix) =
-                pairwise_order(&election.ballots, election.candidates.len());
+                pairwise_order(election.ballots(), election.candidates().len());
             result
                 .elected
                 .sort_by_key(|&candidate_id| order.get(&candidate_id.to_string()).copied().unwrap_or(usize::MAX));
@@ -247,7 +336,7 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
                 .elected
                 .into_iter()
                 .map(|e| Elected {
-                    candidate: election.candidates[e].clone(),
+                    candidate: election.candidates()[e].clone(),
                     id: e,
                 })
                 .collect();
@@ -260,7 +349,124 @@ pub fn stv_droop(election: Election) -> Result<ElectionResult, String> {
                 pairwise_matrix,
             })
         }
+        ElectionType::StvMdGrouped => {
+            unreachable!("grouped elections handled separately")
+        }
     }
+}
+
+fn stv_droop_grouped(election: Election) -> Result<ElectionResult, String> {
+    let candidates = election.candidates().to_vec();
+    let ballots = election.ballots().to_vec();
+    let groups = election.groups().to_vec();
+    let candidate_groups = election.candidate_groups().to_vec();
+    let seats = election.seats();
+
+    let total_group_seats: u32 = groups.iter().map(|g| g.seats).sum();
+    if total_group_seats as usize != seats {
+        return Err(format!(
+            "Sum of group seats ({}) must equal total seats ({})",
+            total_group_seats, seats
+        ));
+    }
+
+    let mut group_results = Vec::new();
+    let mut all_elected = Vec::new();
+
+    for group in &groups {
+        let group_name = &group.name;
+        let group_seats = group.seats as usize;
+
+        let group_indices: Vec<usize> = candidate_groups
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| *g == group_name)
+            .map(|(i, _)| i)
+            .collect();
+
+        if group_indices.is_empty() {
+            return Err(format!("No candidates assigned to group '{}'", group_name));
+        }
+
+        let group_candidates: Vec<String> = group_indices
+            .iter()
+            .map(|&i| candidates[i].clone())
+            .collect();
+
+        let group_ballots: Vec<CombinedBallot> = ballots
+            .iter()
+            .map(|b| {
+                let local_ranks: Vec<(usize, Option<usize>)> = group_indices
+                    .iter()
+                    .enumerate()
+                    .map(|(local, &orig_idx)| {
+                        let rank = if orig_idx < b.ranks.len() {
+                            b.ranks[orig_idx]
+                        } else {
+                            None
+                        };
+                        (local, rank)
+                    })
+                    .collect();
+
+                let mut ranked_pairs: Vec<(usize, usize)> = local_ranks
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(local, &(_, rank))| rank.map(|r| (local, r)))
+                    .collect();
+                ranked_pairs.sort_by_key(|&(_, r)| r);
+
+                let mut new_ranks = vec![None; group_indices.len()];
+                for (new_rank, (local, _)) in ranked_pairs.iter().enumerate() {
+                    new_ranks[*local] = Some(new_rank);
+                }
+
+                CombinedBallot {
+                    votes: b.votes,
+                    ranks: new_ranks,
+                }
+            })
+            .collect();
+
+        let group_election = Election::StvMd {
+            candidates: group_candidates.clone(),
+            seats: group_seats,
+            ballots: group_ballots,
+        };
+
+        let sub_result = stv_droop_single(group_election)?;
+
+        let sub_elected = sub_result.elected();
+        let mapped_elected: Vec<Elected> = sub_elected
+            .iter()
+            .map(|e| {
+                let original_id = group_indices[e.id];
+                Elected {
+                    candidate: candidates[original_id].clone(),
+                    id: original_id,
+                }
+            })
+            .collect();
+
+        let group_result = GroupResult {
+            group: group_name.clone(),
+            seats: group_seats,
+            election: sub_result.election().clone(),
+            log: sub_result.log().clone(),
+            elected: mapped_elected.clone(),
+        };
+
+        all_elected.extend(mapped_elected);
+        group_results.push(group_result);
+    }
+
+    let groups = election.groups().to_vec();
+    Ok(ElectionResult::StvMdGrouped {
+        election,
+        groups,
+        group_results,
+        elected: all_elected,
+    })
 }
 
 pub fn to_election(
@@ -269,7 +475,17 @@ pub fn to_election(
     election_type: ElectionType,
     ballots: Vec<Ballot>,
 ) -> Election {
-    // Aggregate ballots by their ranked_choices pattern
+    to_election_with_groups(candidates, seats, election_type, ballots, vec![], vec![])
+}
+
+pub fn to_election_with_groups(
+    candidates: Vec<String>,
+    seats: usize,
+    election_type: ElectionType,
+    ballots: Vec<Ballot>,
+    groups: Vec<GroupConfig>,
+    candidate_groups: Vec<String>,
+) -> Election {
     let mut pattern_counts: HashMap<Vec<Option<usize>>, usize> = HashMap::new();
     for ballot in ballots {
         *pattern_counts.entry(ballot.ranks).or_insert(0) += 1;
@@ -282,10 +498,23 @@ pub fn to_election(
 
     ballots.sort_by(|a, b| b.votes.cmp(&a.votes));
 
-    Election {
-        candidates: candidates.to_vec(),
-        seats,
-        election_type,
-        ballots,
+    match election_type {
+        ElectionType::StvMd => Election::StvMd {
+            candidates,
+            seats,
+            ballots,
+        },
+        ElectionType::StvMdCoperland => Election::StvMdCoperland {
+            candidates,
+            seats,
+            ballots,
+        },
+        ElectionType::StvMdGrouped => Election::StvMdGrouped {
+            candidates,
+            seats,
+            ballots,
+            groups,
+            candidate_groups,
+        },
     }
 }

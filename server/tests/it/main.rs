@@ -1,4 +1,5 @@
 mod export;
+mod grouped;
 mod log;
 
 use axum_test::TestServer;
@@ -184,14 +185,14 @@ async fn test_election_workflow() -> Result<(), String> {
     let results = state.results.unwrap();
     assert_eq!(results.elected().len(), 1);
     assert_eq!(results.elected()[0].candidate, "Apple");
-    assert_eq!(results.election().ballots.len(), 2); // Two ballot groups: 10 Apple->Banana, 9 Banana->Apple
+    assert_eq!(results.election().ballots().len(), 2); // Two ballot groups: 10 Apple->Banana, 9 Banana->Apple
 
     // Verify ballot IDs are exposed after election ends
     assert!(
-        state.election.ballots.is_some(),
+        state.election.ballots().is_some(),
         "Ballot IDs should be visible after election ends"
     );
-    let ballot_ids = state.election.ballots.unwrap();
+    let ballot_ids = state.election.ballots().clone().unwrap();
     assert_eq!(ballot_ids.len(), 19);
 
     // Test: Try to cast a vote after election has ended - should fail
