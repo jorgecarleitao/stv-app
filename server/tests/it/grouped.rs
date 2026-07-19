@@ -14,19 +14,16 @@ async fn setup_db() -> Result<sea_orm::DbConn, String> {
     Ok(db)
 }
 
-fn make_server() -> (TestServer, sea_orm::DbConn) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let db = rt.block_on(setup_db()).unwrap();
-    let app = create_app(db.clone()).unwrap();
+async fn make_server() -> Result<(TestServer, sea_orm::DbConn), String> {
+    let db = setup_db().await?;
+    let app = create_app(db.clone()).map_err(|e| e.to_string())?;
     let server = TestServer::builder().mock_transport().build(app).unwrap();
-    (server, db)
+    Ok((server, db))
 }
 
 #[tokio::test]
 async fn test_create_grouped_election() -> Result<(), String> {
-    let db = setup_db().await?;
-    let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let (server, _db) = make_server().await?;
 
     let create_resp = server
         .post("/api/elections")
@@ -63,9 +60,7 @@ async fn test_create_grouped_election() -> Result<(), String> {
 
 #[tokio::test]
 async fn test_grouped_election_simulate() -> Result<(), String> {
-    let db = setup_db().await?;
-    let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let (server, _db) = make_server().await?;
 
     let sim_resp = server
         .post("/api/simulate")
