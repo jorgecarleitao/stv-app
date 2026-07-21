@@ -149,54 +149,6 @@ async fn health() -> Result<(), error::Error> {
 
 #[utoipa::path(
     get,
-    path = "/api/elections",
-    responses(
-        (status = 200, description = "List of all elections", body = Vec<ElectionConfig>),
-        (status = 500, description = "Internal server error")
-    ),
-    tag = "elections"
-)]
-#[axum::debug_handler]
-async fn list_elections(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<ElectionConfig>>, error::Error> {
-    let elections = elections::Elections::find()
-        .all(&state.db)
-        .await
-        .map_err(|e| error::Error::Internal(format!("Failed to load elections: {}", e)))?;
-
-    let configs: Vec<ElectionConfig> = elections
-        .into_iter()
-        .map(|e| {
-            let common = |id, title, description, candidates, seats, start_time, end_time| {
-                (id, title, description, candidates, seats, start_time, end_time)
-            };
-            let (id, title, description, candidates, seats, start_time, end_time) = common(
-                e.uuid, e.title, e.description, e.candidates.0, e.num_seats, e.start_time, e.end_time,
-            );
-            match parse_election_type(&e.election_type) {
-                counting::ElectionType::StvMd => ElectionConfig::StvMd {
-                    id, title, description, candidates, seats, start_time, end_time,
-                    number_of_ballots: 0, ballots: None,
-                },
-                counting::ElectionType::StvMdCoperland => ElectionConfig::StvMdCoperland {
-                    id, title, description, candidates, seats, start_time, end_time,
-                    number_of_ballots: 0, ballots: None,
-                },
-                counting::ElectionType::StvMdGrouped => ElectionConfig::StvMdGrouped {
-                    id, title, description, candidates, seats, start_time, end_time,
-                    number_of_ballots: 0, ballots: None,
-                    groups: e.groups.0, candidate_groups: e.candidate_groups.0,
-                },
-            }
-        })
-        .collect();
-
-    Ok(Json(configs))
-}
-
-#[utoipa::path(
-    get,
     path = "/api/elections/{election_uuid}",
     params(
         ("election_uuid" = String, Path, description = "Election UUID")
@@ -451,7 +403,6 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
     #[openapi(
         paths(
             health,
-            list_elections,
             get_election,
             simulate,
             elections::handlers::create_election,
@@ -516,7 +467,7 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
     let elections_router = Router::new()
         .route(
             "/",
-            get(list_elections).post(elections::handlers::create_election),
+            post(elections::handlers::create_election),
         )
         .route("/{election_id}", get(get_election))
         .route(
