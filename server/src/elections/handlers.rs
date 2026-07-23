@@ -26,6 +26,23 @@ where
     Ok(redeemed_token_count > 0)
 }
 
+pub(crate) async fn find_election_by_admin<C>(
+    db: &C,
+    election_id: &str,
+    admin_uuid: &str,
+) -> Result<entity::Model, Error>
+where
+    C: ConnectionTrait,
+{
+    Elections::find()
+        .filter(entity::Column::Uuid.eq(election_id))
+        .filter(entity::Column::AdminUuid.eq(admin_uuid))
+        .one(db)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to query election: {}", e)))?
+        .ok_or(Error::NotFound)
+}
+
 fn election_type_to_string(t: ElectionType) -> String {
     match t {
         ElectionType::StvMd => "stv-md".to_string(),
@@ -135,13 +152,7 @@ pub async fn get_election_by_admin(
     State(state): State<AppState>,
     Path((election_id, admin_uuid)): Path<(String, String)>,
 ) -> Result<Json<ElectionResponse>, Error> {
-    let election = Elections::find()
-        .filter(entity::Column::Uuid.eq(&election_id))
-        .filter(entity::Column::AdminUuid.eq(&admin_uuid))
-        .one(&state.db)
-        .await
-        .map_err(|e| Error::Internal(format!("Failed to query election: {}", e)))?
-        .ok_or(Error::NotFound)?;
+    let election = find_election_by_admin(&state.db, &election_id, &admin_uuid).await?;
 
     let is_locked = is_election_locked(&state.db, &election_id).await?;
 
@@ -177,13 +188,7 @@ pub async fn update_election_by_admin(
         .await
         .map_err(|e| Error::Internal(format!("Failed to start transaction: {}", e)))?;
 
-    let election = Elections::find()
-        .filter(entity::Column::Uuid.eq(&election_id))
-        .filter(entity::Column::AdminUuid.eq(&admin_uuid))
-        .one(&txn)
-        .await
-        .map_err(|e| Error::Internal(format!("Failed to query election: {}", e)))?
-        .ok_or(Error::NotFound)?;
+    let election = find_election_by_admin(&txn, &election_id, &admin_uuid).await?;
 
     // Check if title, description, or candidates are being modified
     let title_changed = election.title != req.title();
