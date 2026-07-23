@@ -7,6 +7,7 @@ mod m20250126_000001_add_ordered_seats;
 mod m20250715_000001_add_election_type;
 mod m20250716_000001_create_election_results;
 mod m20250719_000001_add_grouped_fields;
+mod m20250722_000001_add_email_config;
 
 pub struct Migrator;
 
@@ -21,6 +22,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250715_000001_add_election_type::Migration),
             Box::new(m20250716_000001_create_election_results::Migration),
             Box::new(m20250719_000001_add_grouped_fields::Migration),
+            Box::new(m20250722_000001_add_email_config::Migration),
         ]
     }
 }

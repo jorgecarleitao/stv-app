@@ -66,17 +66,18 @@ async fn test_election_workflow() -> Result<(), String> {
             "/api/elections/{}/admin/{}/tokens",
             election_id, admin_uuid
         ))
-        .json(&19)
+        .json(&json!({"count": 19}))
         .await;
     assert_eq!(tokens_resp.status_code(), 200, "Failed to create tokens");
-    let tokens = tokens_resp.json::<Vec<String>>();
+    let tokens = tokens_resp.json::<Vec<serde_json::Value>>();
     assert_eq!(tokens.len(), 19, "Expected 19 tokens");
+    let token_ids: Vec<String> = tokens.iter().map(|t| t["id"].as_str().unwrap().to_string()).collect();
 
     // Step 3 & 4: Redeem tokens to create ballots and cast votes
     // Cast 10 Apple->Banana ballots
     let mut first_ballot_id = String::new();
     for i in 0..10 {
-        let token_id = &tokens[i];
+        let token_id = &token_ids[i];
 
         // Redeem token to create ballot
         let redeem_resp = server
@@ -123,7 +124,7 @@ async fn test_election_workflow() -> Result<(), String> {
 
     // Cast 9 Banana->Apple ballots
     for i in 10..19 {
-        let token_id = &tokens[i];
+        let token_id = &token_ids[i];
 
         // Redeem token to create ballot
         let redeem_resp = server
@@ -268,11 +269,11 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
             "/api/elections/{}/admin/{}/tokens",
             election_id, admin_uuid
         ))
-        .json(&1)
+        .json(&json!({"count": 1}))
         .await;
     assert_eq!(tokens_resp.status_code(), 200);
-    let tokens = tokens_resp.json::<Vec<String>>();
-    let token_id = &tokens[0];
+    let tokens = tokens_resp.json::<Vec<serde_json::Value>>();
+    let token_id = tokens[0]["id"].as_str().unwrap().to_string();
 
     // Redeem the token
     let redeem_resp = server
@@ -373,8 +374,353 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
     assert_eq!(
         update_other_fields.status_code(),
         200,
-        "Should be able to modify other fields (seats, dates) even after tokens are redeemed"
+         "Should be able to modify other fields (seats, dates) even after tokens are redeemed"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_create_tokens_with_recipients() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app).unwrap();
+
+    // Create election
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "Email Token Test",
+            "candidates": ["Alice", "Bob"],
+            "num_seats": 1,
+            "election_type": "stv-md-coperland",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2099-12-31T23:59:59Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+
+    let election = create_resp.json::<serde_json::Value>();
+    let election_id = election["uuid"].as_str().unwrap();
+    let admin_uuid = election["admin_uuid"].as_str().unwrap();
+
+    // Create tokens with recipients (count inferred from array length)
+    let tokens_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .json(&json!({
+            "recipients": ["alice@example.com", "bob@example.com", "carol@example.com"]
+        }))
+        .await;
+    assert_eq!(tokens_resp.status_code(), 200);
+    let tokens = tokens_resp.json::<Vec<serde_json::Value>>();
+    assert_eq!(tokens.len(), 3);
+
+    // Verify emails are stored
+    let expected_emails = ["alice@example.com", "bob@example.com", "carol@example.com"];
+    for (i, token) in tokens.iter().enumerate() {
+        assert_eq!(token["email"].as_str(), Some(expected_emails[i]));
+        assert!(token["id"].as_str().is_some());
+    }
+
+    // Fetch tokens via admin endpoint and verify emails persisted
+    let fetch_resp = server
+        .get(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .await;
+    assert_eq!(fetch_resp.status_code(), 200);
+    let fetched = fetch_resp.json::<Vec<serde_json::Value>>();
+    assert_eq!(fetched.len(), 3);
+    let mut fetched_emails: Vec<&str> = fetched.iter().map(|t| t["email"].as_str().unwrap()).collect();
+    fetched_emails.sort();
+    assert_eq!(fetched_emails, vec!["alice@example.com", "bob@example.com", "carol@example.com"]);
+
+    // Test: duplicate recipients should be rejected
+    let dup_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .json(&json!({
+            "recipients": ["alice@example.com", "alice@example.com"]
+        }))
+        .await;
+    assert_eq!(dup_resp.status_code(), 400);
+
+    // Test: both count and recipients provided should be rejected
+    let both_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .json(&json!({
+            "count": 2,
+            "recipients": ["a@b.com"]
+        }))
+        .await;
+    assert_eq!(both_resp.status_code(), 400);
+
+    // Test: neither count nor recipients provided should be rejected
+    let neither_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .json(&json!({}))
+        .await;
+    assert_eq!(neither_resp.status_code(), 400);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_email_config_crud() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app).unwrap();
+
+    // Create an election
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "Email Config Test",
+            "candidates": ["X", "Y"],
+            "num_seats": 1,
+            "election_type": "stv-md-coperland",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2099-12-31T23:59:59Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+    let election = create_resp.json::<serde_json::Value>();
+    let election_id = election["uuid"].as_str().unwrap();
+    let admin_uuid = election["admin_uuid"].as_str().unwrap();
+
+    // GET before config exists should return 404
+    let get_resp = server
+        .get(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
+        .await;
+    assert_eq!(get_resp.status_code(), 404);
+
+    // Create email config
+    let upsert_resp = server
+        .put(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
+        .json(&json!({
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "smtp_username": "user@example.com",
+            "smtp_password": "secret123",
+            "from_name": "Election Admin",
+            "from_email": "elections@example.com"
+        }))
+        .await;
+    assert_eq!(upsert_resp.status_code(), 200);
+    let upsert_body = upsert_resp.json::<serde_json::Value>();
+    assert_eq!(upsert_body["smtp_host"], "smtp.example.com");
+    // Password should NOT be returned
+    assert!(upsert_body.get("smtp_password").is_none());
+
+    // GET should return config without password
+    let get_resp = server
+        .get(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
+        .await;
+    assert_eq!(get_resp.status_code(), 200);
+    let get_body = get_resp.json::<serde_json::Value>();
+    assert_eq!(get_body["smtp_host"], "smtp.example.com");
+    assert!(get_body.get("smtp_password").is_none());
+
+    // Update the config
+    let update_resp = server
+        .put(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
+        .json(&json!({
+            "smtp_host": "smtp.updated.com",
+            "smtp_port": 465,
+            "smtp_username": "new@example.com",
+            "smtp_password": "newsecret",
+            "from_name": "New Admin",
+            "from_email": "new@example.com"
+        }))
+        .await;
+    assert_eq!(update_resp.status_code(), 200);
+    assert_eq!(update_resp.json::<serde_json::Value>()["smtp_host"], "smtp.updated.com");
+
+    // Delete config
+    let del_resp = server
+        .delete(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
+        .await;
+    assert_eq!(del_resp.status_code(), 200);
+
+    // GET should return 404 after delete
+    let get_resp = server
+        .get(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
+        .await;
+    assert_eq!(get_resp.status_code(), 404);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_emails_without_config_returns_error() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app).unwrap();
+
+    // Create election
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "Send Email Test",
+            "candidates": ["A", "B"],
+            "num_seats": 1,
+            "election_type": "stv-md-coperland",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2099-12-31T23:59:59Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+    let election = create_resp.json::<serde_json::Value>();
+    let election_id = election["uuid"].as_str().unwrap();
+    let admin_uuid = election["admin_uuid"].as_str().unwrap();
+
+    // Try to send without config — should fail
+    let send_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens/send", election_id, admin_uuid))
+        .json(&json!({ "base_url": "https://example.com" }))
+        .await;
+    assert_eq!(send_resp.status_code(), 400);
+    assert!(send_resp.text().contains("Email not configured"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_emails_with_recipients_without_email_set_returns_error() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app).unwrap();
+
+    // Create election
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "Recipient mismatch test",
+            "candidates": ["A", "B"],
+            "num_seats": 1,
+            "election_type": "stv-md-coperland",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2099-12-31T23:59:59Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+    let election = create_resp.json::<serde_json::Value>();
+    let election_id = election["uuid"].as_str().unwrap();
+    let admin_uuid = election["admin_uuid"].as_str().unwrap();
+
+    // Create tokens without email
+    let tokens_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .json(&json!({ "count": 1 }))
+        .await;
+    assert_eq!(tokens_resp.status_code(), 200);
+    let tokens = tokens_resp.json::<Vec<serde_json::Value>>();
+    let token_id = tokens[0]["id"].as_str().unwrap();
+
+    // Set up SMTP config
+    server
+        .put(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
+        .json(&json!({
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "smtp_username": "user",
+            "smtp_password": "pass",
+            "from_name": "Admin",
+            "from_email": "admin@example.com"
+        }))
+        .await;
+
+    // Try to send a specific token without email set — should fail
+    let send_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens/{}/send", election_id, admin_uuid, token_id))
+        .json(&json!({ "base_url": "https://example.com" }))
+        .await;
+    assert_eq!(send_resp.status_code(), 404);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_create_tokens_with_usize_backward_compat() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app).unwrap();
+
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "Backward compat test",
+            "candidates": ["A", "B"],
+            "num_seats": 1,
+            "election_type": "stv-md-coperland",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2099-12-31T23:59:59Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+    let election = create_resp.json::<serde_json::Value>();
+    let election_id = election["uuid"].as_str().unwrap();
+    let admin_uuid = election["admin_uuid"].as_str().unwrap();
+
+    // Create tokens with object form
+    let tokens_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .json(&json!({"count": 5}))
+        .await;
+    assert_eq!(tokens_resp.status_code(), 200);
+    let tokens = tokens_resp.json::<Vec<serde_json::Value>>();
+    assert_eq!(tokens.len(), 5);
+    for token in &tokens {
+        assert!(token["id"].as_str().is_some());
+        assert_eq!(token["email"], serde_json::Value::Null);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_patch_token_mark_sent() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app).unwrap();
+
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "Patch Token Test",
+            "candidates": ["A", "B"],
+            "num_seats": 1,
+            "election_type": "stv-md-coperland",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2099-12-31T23:59:59Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+    let election = create_resp.json::<serde_json::Value>();
+    let eid = election["uuid"].as_str().unwrap();
+    let aid = election["admin_uuid"].as_str().unwrap();
+
+    let tokens_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", eid, aid))
+        .json(&json!({"count": 1}))
+        .await;
+    assert_eq!(tokens_resp.status_code(), 200);
+    let tid = tokens_resp.json::<Vec<serde_json::Value>>()[0]["id"].as_str().unwrap().to_string();
+
+    let sent_time = "2026-01-15T10:30:00Z";
+
+    // PATCH to mark as sent
+    let patch_resp = server
+        .patch(&format!("/api/elections/{}/admin/{}/tokens/{}", eid, aid, tid))
+        .json(&json!({"sent_at": sent_time}))
+        .await;
+    assert_eq!(patch_resp.status_code(), 200);
+    let patch_body = patch_resp.json::<serde_json::Value>();
+    assert_eq!(patch_body["sent_at"].as_str(), Some(sent_time));
+
+    // Verify sent_at is persisted
+    let tokens_resp = server
+        .get(&format!("/api/elections/{}/admin/{}/tokens", eid, aid))
+        .await;
+    let token = &tokens_resp.json::<Vec<serde_json::Value>>()[0];
+    assert_eq!(token["sent_at"].as_str(), Some(sent_time));
 
     Ok(())
 }

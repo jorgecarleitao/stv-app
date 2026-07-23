@@ -14,6 +14,7 @@ use crate::log::{self, CountingLogActionType, CountingLogCandidateStatus};
 pub async fn build_export_zip(
     db: &DbConn,
     election_uuid: &str,
+    include_emails: bool,
 ) -> Result<Vec<u8>, Error> {
     let election = elections::entity::Entity::find_by_id(election_uuid)
         .one(db)
@@ -69,14 +70,20 @@ pub async fn build_export_zip(
 
     let candidates = &election.candidates.0;
 
+    let tokens_len = all_tokens.len();
+    let ballots_len = all_ballots.len();
+    let cast = all_ballots.iter().filter(|b| b.ranks.is_some()).count();
+
     let cursor = std::io::Cursor::new(Vec::new());
     let mut zip = ZipWriter::new(cursor);
 
-    write_text(&mut zip, "README.md", &generate_readme(&election, &all_tokens, &all_ballots))?;
+    write_text(&mut zip, "README.md", &generate_readme(&election, tokens_len, cast, ballots_len))?;
 
-    write_text(&mut zip, "election.json", &serde_json::to_string_pretty(&election_config_json(&election, &all_tokens, &all_ballots)).unwrap())?;
+    write_text(&mut zip, "election.json", &serde_json::to_string_pretty(&election_config_json(&election)).unwrap())?;
 
-    write_text(&mut zip, "ballots.json", &serde_json::to_string_pretty(&ballots_json_data(&all_ballots)).unwrap())?;
+    write_text(&mut zip, "tokens.json", &serde_json::to_string_pretty(&tokens_json_data(all_tokens, include_emails)).unwrap())?;
+
+    write_text(&mut zip, "ballots.json", &serde_json::to_string_pretty(&ballots_json_data(all_ballots)).unwrap())?;
 
     if let Some(ref result) = result {
         write_text(&mut zip, "results.json", &serde_json::to_string_pretty(result).unwrap())?;
@@ -99,11 +106,11 @@ fn write_text(zip: &mut ZipWriter<std::io::Cursor<Vec<u8>>>, name: &str, content
 
 fn generate_readme(
     election: &elections::entity::Model,
-    tokens: &[ballot_tokens::Model],
-    ballots: &[ballots::Model],
+    tokens_len: usize,
+    cast: usize,
+    ballots_len: usize,
 ) -> String {
-    let cast = ballots.iter().filter(|b| b.ranks.is_some()).count();
-    let abstained = ballots.len() - cast;
+    let abstained = ballots_len - cast;
 
     let desc_line = election
         .description
@@ -127,9 +134,16 @@ Election configuration and metadata in JSON format.
 - `seats` — Number of seats to fill
 - `election_type` — Voting algorithm used (`stv-md`, `stv-md-coperland`, or `stv-md-grouped`)
 - `start_time` / `end_time` — Election period (ISO 8601)
-- `number_of_ballots` — Total number of ballot tokens issued
-- `ballot_ids` — List of all ballot IDs (visible after election ends)
 - `groups` — (Grouped elections only) Group definitions with name and seat count
+- `candidate_groups` — (Grouped elections only) Group assignment per candidate
+
+### `tokens.json`
+All ballot tokens issued for this election.
+- `id` — Token identifier (UUID)
+- `created_at` — When the token was created
+- `sent_at` — When the token email was sent (null if not sent)
+- `converted_at` — When the token was redeemed (null if not redeemed)
+- `email` — Recipient email address (only included when include_emails is set)
 - `candidate_groups` — (Grouped elections only) Group assignment per candidate
 
 ### `ballots.json`
@@ -172,7 +186,7 @@ Human-readable election report. Self-contained HTML (no external dependencies). 
         etype = election.election_type,
         start = election.start_time.to_rfc3339(),
         end = election.end_time.to_rfc3339(),
-        tokens = tokens.len(),
+        tokens = tokens_len,
         cast = cast,
         abstained = abstained,
     )
@@ -187,17 +201,11 @@ struct ExportElectionJson {
     election_type: String,
     start_time: DateTime<Utc>,
     end_time: DateTime<Utc>,
-    number_of_ballots: usize,
-    ballot_ids: Option<Vec<String>>,
     groups: Vec<crate::counting::GroupConfig>,
     candidate_groups: Vec<String>,
 }
 
-fn election_config_json(
-    election: &elections::entity::Model,
-    tokens: &[ballot_tokens::Model],
-    ballots: &[ballots::Model],
-) -> ExportElectionJson {
+fn election_config_json(election: &elections::entity::Model) -> ExportElectionJson {
     ExportElectionJson {
         title: election.title.clone(),
         description: election.description.clone(),
@@ -206,8 +214,6 @@ fn election_config_json(
         election_type: election.election_type.clone(),
         start_time: election.start_time,
         end_time: election.end_time,
-        number_of_ballots: tokens.len(),
-        ballot_ids: Some(ballots.iter().map(|b| b.id.clone()).collect()),
         groups: election.groups.0.clone(),
         candidate_groups: election.candidate_groups.0.clone(),
     }
@@ -219,12 +225,35 @@ struct BallotJsonEntry {
     ranks: Option<Vec<Option<usize>>>,
 }
 
-fn ballots_json_data(ballots: &[ballots::Model]) -> Vec<BallotJsonEntry> {
+#[derive(serde::Serialize)]
+struct TokenJsonEntry {
+    id: String,
+    created_at: DateTime<Utc>,
+    sent_at: Option<DateTime<Utc>>,
+    converted_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+}
+
+fn tokens_json_data(tokens: Vec<ballot_tokens::Model>, include_emails: bool) -> Vec<TokenJsonEntry> {
+    tokens
+        .into_iter()
+        .map(|t| TokenJsonEntry {
+            id: t.id,
+            created_at: t.created_at,
+            sent_at: t.sent_at,
+            converted_at: t.converted_at,
+            email: if include_emails { t.email } else { None },
+        })
+        .collect()
+}
+
+fn ballots_json_data(ballots: Vec<ballots::Model>) -> Vec<BallotJsonEntry> {
     ballots
-        .iter()
+        .into_iter()
         .map(|b| BallotJsonEntry {
-            id: b.id.clone(),
-            ranks: b.ranks.as_ref().map(|r| r.0.clone()),
+            id: b.id,
+            ranks: b.ranks.map(|r| r.0),
         })
         .collect()
 }

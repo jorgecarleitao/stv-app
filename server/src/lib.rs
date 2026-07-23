@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    routing::{get, post},
+    extract::{Path, Query, State},
+    routing::{get, patch, post, put},
 };
 use chrono::Utc;
 use sea_orm::{ColumnTrait, DbConn, EntityTrait, QueryFilter};
@@ -14,6 +14,8 @@ pub mod ballots;
 pub mod counting;
 pub mod election_results;
 pub mod elections;
+pub mod email;
+pub mod email_config;
 pub mod error;
 pub mod export;
 pub mod log;
@@ -310,12 +312,19 @@ async fn simulate(
         .map(Json)
 }
 
+#[derive(Deserialize)]
+struct ExportParams {
+    #[serde(default)]
+    include_emails: bool,
+}
+
 #[axum::debug_handler]
 async fn export_election(
     Path(election_uuid): Path<String>,
     State(state): State<AppState>,
+    Query(params): Query<ExportParams>,
 ) -> Result<axum::response::Response, error::Error> {
-    let bytes = export::build_export_zip(&state.db, &election_uuid).await?;
+    let bytes = export::build_export_zip(&state.db, &election_uuid, params.include_emails).await?;
     let filename = format!("election-export-{}.zip", election_uuid);
     let disposition = format!("attachment; filename=\"{}\"", filename);
     let response = axum::response::Response::builder()
@@ -412,6 +421,13 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
             ballot_tokens::handlers::create_ballot_tokens,
             ballot_tokens::handlers::redeem_token,
             ballot_tokens::handlers::get_token_info,
+            ballot_tokens::handlers::send_emails,
+            ballot_tokens::handlers::send_single_token,
+            ballot_tokens::handlers::patch_token,
+            ballot_tokens::handlers::batch_mark_sent,
+            email_config::handlers::upsert_email_config,
+            email_config::handlers::get_email_config,
+            email_config::handlers::delete_email_config,
             ballots::handlers::get_ballots_by_election,
             ballots::handlers::get_ballot,
             ballots::handlers::put_ballot,
@@ -439,12 +455,20 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
                 log::CountingLogStats,
                 elections::CreateElectionRequest,
                 elections::ElectionResponse,
+                email_config::handlers::EmailConfigResponse,
+                email_config::handlers::UpsertEmailConfigRequest,
+                ballot_tokens::handlers::SendEmailsRequest,
+                ballot_tokens::handlers::SendEmailResult,
+                ballot_tokens::handlers::MarkSentBody,
+                ballot_tokens::handlers::BatchMarkSentBody,
+                ballot_tokens::handlers::MarkSentResult,
             )
         ),
         tags(
             (name = "system", description = "System health endpoints"),
             (name = "elections", description = "Election management endpoints"),
             (name = "ballot-tokens", description = "Ballot token management endpoints"),
+            (name = "email-config", description = "Email SMTP configuration endpoints"),
             (name = "ballots", description = "Ballot management endpoints"),
             (name = "simulation", description = "Election simulation endpoints")
         ),
@@ -487,6 +511,28 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
             "/{election_id}/admin/{admin_uuid}/tokens",
             get(ballot_tokens::handlers::get_ballot_tokens)
                 .post(ballot_tokens::handlers::create_ballot_tokens),
+        )
+        .route(
+            "/{election_id}/admin/{admin_uuid}/tokens/send",
+            post(ballot_tokens::handlers::send_emails),
+        )
+        .route(
+            "/{election_id}/admin/{admin_uuid}/tokens/{token_id}/send",
+            post(ballot_tokens::handlers::send_single_token),
+        )
+        .route(
+            "/{election_id}/admin/{admin_uuid}/tokens/mark-sent",
+            post(ballot_tokens::handlers::batch_mark_sent),
+        )
+        .route(
+            "/{election_id}/admin/{admin_uuid}/tokens/{token_id}",
+            patch(ballot_tokens::handlers::patch_token),
+        )
+        .route(
+            "/{election_id}/admin/{admin_uuid}/email-config",
+            put(email_config::handlers::upsert_email_config)
+                .get(email_config::handlers::get_email_config)
+                .delete(email_config::handlers::delete_email_config),
         )
         .route(
             "/{election_id}/tokens/{token_id}",

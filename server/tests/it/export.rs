@@ -73,13 +73,14 @@ async fn test_export_closed_election() -> Result<(), String> {
 
     let tokens_resp = server
         .post(&format!("/api/elections/{}/admin/{}/tokens", eid, aid))
-        .json(&json!(19))
+        .json(&json!({"count": 19}))
         .await;
     assert_eq!(tokens_resp.status_code(), 200);
-    let tokens = tokens_resp.json::<Vec<String>>();
+    let tokens = tokens_resp.json::<Vec<serde_json::Value>>();
     assert_eq!(tokens.len(), 19);
+    let token_ids: Vec<String> = tokens.iter().map(|t| t["id"].as_str().unwrap().to_string()).collect();
 
-    for (i, tid) in tokens.iter().enumerate() {
+    for (i, tid) in token_ids.iter().enumerate() {
         let redeem = server
             .post(&format!("/api/elections/{}/tokens/{}/redeem", eid, tid))
             .await;
@@ -115,7 +116,7 @@ async fn test_export_closed_election() -> Result<(), String> {
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
 
     let names: Vec<String> = archive.file_names().map(|n| n.to_string()).collect();
-    for required in &["README.md", "election.json", "ballots.json", "results.json", "report.html"] {
+    for required in &["README.md", "election.json", "tokens.json", "ballots.json", "results.json", "report.html"] {
         assert!(names.contains(&required.to_string()), "missing {}", required);
     }
 
@@ -131,9 +132,16 @@ async fn test_export_closed_election() -> Result<(), String> {
     assert_eq!(election_data["title"], "Closed Election");
     assert_eq!(election_data["candidates"].as_array().unwrap().len(), 2);
     assert_eq!(election_data["seats"], 1);
-    assert_eq!(election_data["number_of_ballots"], 19);
-    assert!(election_data["ballot_ids"].is_array());
-    assert_eq!(election_data["ballot_ids"].as_array().unwrap().len(), 19);
+
+    let tokens_json = read_zip_entry(&mut archive, "tokens.json");
+    let tokens_data: Vec<serde_json::Value> =
+        serde_json::from_str(&tokens_json).map_err(|e| e.to_string())?;
+    assert_eq!(tokens_data.len(), 19);
+    for t in &tokens_data {
+        assert!(t["id"].is_string());
+        assert!(t["created_at"].is_string());
+        assert!(t.get("email").is_none(), "email should not be present without include_emails");
+    }
 
     let ballots_json = read_zip_entry(&mut archive, "ballots.json");
     let ballots_data: Vec<serde_json::Value> =
@@ -194,15 +202,16 @@ async fn test_export_no_ballots() -> Result<(), String> {
     let cursor = std::io::Cursor::new(resp.as_bytes().as_ref());
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
 
+    let tokens_json = read_zip_entry(&mut archive, "tokens.json");
+    assert_eq!(tokens_json, "[]");
+
     let ballots_json = read_zip_entry(&mut archive, "ballots.json");
     assert_eq!(ballots_json, "[]");
 
     let election_json = read_zip_entry(&mut archive, "election.json");
     let election_data: serde_json::Value =
         serde_json::from_str(&election_json).map_err(|e| e.to_string())?;
-    assert_eq!(election_data["number_of_ballots"], 0);
-    assert!(election_data["ballot_ids"].is_array());
-    assert!(election_data["ballot_ids"].as_array().unwrap().is_empty());
+    assert_eq!(election_data["title"], "Empty Election");
 
     Ok(())
 }
@@ -231,13 +240,14 @@ async fn test_export_abstentions() -> Result<(), String> {
 
     let tokens_resp = server
         .post(&format!("/api/elections/{}/admin/{}/tokens", eid, aid))
-        .json(&json!(2))
+        .json(&json!({"count": 2}))
         .await;
     assert_eq!(tokens_resp.status_code(), 200);
-    let tokens = tokens_resp.json::<Vec<String>>();
+    let tokens = tokens_resp.json::<Vec<serde_json::Value>>();
+    let token_ids: Vec<String> = tokens.iter().map(|t| t["id"].as_str().unwrap().to_string()).collect();
 
     let redeem = server
-        .post(&format!("/api/elections/{}/tokens/{}/redeem", eid, tokens[0]))
+        .post(&format!("/api/elections/{}/tokens/{}/redeem", eid, token_ids[0]))
         .await;
     assert_eq!(redeem.status_code(), 200);
     let bid = redeem.json::<String>();
@@ -248,7 +258,7 @@ async fn test_export_abstentions() -> Result<(), String> {
     assert_eq!(vote.status_code(), 200);
 
     let redeem2 = server
-        .post(&format!("/api/elections/{}/tokens/{}/redeem", eid, tokens[1]))
+        .post(&format!("/api/elections/{}/tokens/{}/redeem", eid, token_ids[1]))
         .await;
     assert_eq!(redeem2.status_code(), 200);
 
@@ -271,6 +281,11 @@ async fn test_export_abstentions() -> Result<(), String> {
     let cursor = std::io::Cursor::new(resp.as_bytes().as_ref());
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
 
+    let tokens_json = read_zip_entry(&mut archive, "tokens.json");
+    let tokens_data: Vec<serde_json::Value> =
+        serde_json::from_str(&tokens_json).map_err(|e| e.to_string())?;
+    assert_eq!(tokens_data.len(), 2);
+
     let readme = read_zip_entry(&mut archive, "README.md");
     assert!(readme.contains("Ballots cast"), "readme: {}", readme);
     assert!(readme.contains("Abstained"), "readme: {}", readme);
@@ -286,6 +301,52 @@ async fn test_export_abstentions() -> Result<(), String> {
     assert_eq!(ballots_data[0]["ranks"][1], 1);
 
     assert!(ballots_data[1]["ranks"].is_null());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_export_with_include_emails() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app).unwrap();
+
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "GDPR Test",
+            "candidates": ["A", "B"],
+            "num_seats": 1,
+            "election_type": "stv-md",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2000-01-01T00:00:00Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+    let election = create_resp.json::<serde_json::Value>();
+    let eid = election["uuid"].as_str().unwrap().to_string();
+    let aid = election["admin_uuid"].as_str().unwrap().to_string();
+
+    let tokens_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", eid, aid))
+        .json(&json!({"recipients": ["alice@example.com", "bob@example.com"]}))
+        .await;
+    assert_eq!(tokens_resp.status_code(), 200);
+
+    let resp = server
+        .get(&format!("/api/elections/{}/export?include_emails=true", eid))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+
+    let cursor = std::io::Cursor::new(resp.as_bytes().as_ref());
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
+
+    let tokens_json = read_zip_entry(&mut archive, "tokens.json");
+    let tokens_data: Vec<serde_json::Value> =
+        serde_json::from_str(&tokens_json).map_err(|e| e.to_string())?;
+    assert_eq!(tokens_data.len(), 2);
+    assert!(tokens_data[0]["email"].is_string());
+    assert!(tokens_data[1]["email"].is_string());
 
     Ok(())
 }
