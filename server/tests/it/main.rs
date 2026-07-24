@@ -496,7 +496,6 @@ async fn test_email_config_crud() -> Result<(), String> {
         .put(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
         .json(&json!({
             "smtp_host": "smtp.example.com",
-            "smtp_port": 587,
             "smtp_username": "user@example.com",
             "smtp_password": "secret123",
             "from_name": "Election Admin",
@@ -523,7 +522,6 @@ async fn test_email_config_crud() -> Result<(), String> {
         .put(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
         .json(&json!({
             "smtp_host": "smtp.updated.com",
-            "smtp_port": 465,
             "smtp_username": "new@example.com",
             "smtp_password": "newsecret",
             "from_name": "New Admin",
@@ -619,7 +617,6 @@ async fn test_send_emails_with_recipients_without_email_set_returns_error() -> R
         .put(&format!("/api/elections/{}/admin/{}/email-config", election_id, admin_uuid))
         .json(&json!({
             "smtp_host": "smtp.example.com",
-            "smtp_port": 587,
             "smtp_username": "user",
             "smtp_password": "pass",
             "from_name": "Admin",

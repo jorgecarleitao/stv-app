@@ -1,14 +1,13 @@
-use axum::{Json, extract::{Path, State}};
+use axum::{Json, extract::{Path, State}, http::HeaderMap};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
 use super::entity;
-use crate::{AppState, elections, error::Error};
+use crate::{AppState, elections, email::SmtpConfig, error::Error};
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct EmailConfigResponse {
     pub smtp_host: String,
-    pub smtp_port: i32,
     pub smtp_username: String,
     pub from_name: String,
     pub from_email: String,
@@ -17,7 +16,6 @@ pub struct EmailConfigResponse {
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct UpsertEmailConfigRequest {
     pub smtp_host: String,
-    pub smtp_port: i32,
     pub smtp_username: String,
     #[serde(default)]
     pub smtp_password: Option<String>,
@@ -59,7 +57,6 @@ pub async fn upsert_email_config(
     if let Some(existing) = existing {
         let mut active: entity::ActiveModel = existing.into();
         active.smtp_host = Set(body.smtp_host.clone());
-        active.smtp_port = Set(body.smtp_port);
         active.smtp_username = Set(body.smtp_username.clone());
         if let Some(pwd) = body.smtp_password {
             active.smtp_password = Set(pwd);
@@ -74,7 +71,6 @@ pub async fn upsert_email_config(
         let active = entity::ActiveModel {
             election_id: Set(election_id),
             smtp_host: Set(body.smtp_host.clone()),
-            smtp_port: Set(body.smtp_port),
             smtp_username: Set(body.smtp_username.clone()),
             smtp_password: Set(body.smtp_password.unwrap_or_default()),
             from_name: Set(body.from_name.clone()),
@@ -88,7 +84,6 @@ pub async fn upsert_email_config(
 
     Ok(Json(EmailConfigResponse {
         smtp_host: body.smtp_host,
-        smtp_port: body.smtp_port,
         smtp_username: body.smtp_username,
         from_name: body.from_name,
         from_email: body.from_email,
@@ -123,7 +118,6 @@ pub async fn get_email_config(
         .ok_or(Error::NotFound)
         .map(|c| Json(EmailConfigResponse {
             smtp_host: c.smtp_host,
-            smtp_port: c.smtp_port,
             smtp_username: c.smtp_username,
             from_name: c.from_name,
             from_email: c.from_email,
@@ -156,4 +150,63 @@ pub async fn delete_email_config(
         .map_err(|e| Error::Internal(format!("Failed to delete email config: {}", e)))?;
 
     Ok(Json(()))
+}
+
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct TestEmailRequest {
+    pub to_email: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/elections/{election_id}/admin/{admin_uuid}/email-config/test",
+    params(
+        ("election_id" = String, Path, description = "Election UUID"),
+        ("admin_uuid" = String, Path, description = "Admin UUID for authorization")
+    ),
+    request_body = TestEmailRequest,
+    responses(
+        (status = 200, description = "Test email sent"),
+        (status = 400, description = "Email not configured or invalid request"),
+        (status = 404, description = "Election not found"),
+        (status = 500, description = "Internal server error or SMTP failure")
+    ),
+    tag = "email-config"
+)]
+pub async fn send_test_email(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path((election_id, admin_uuid)): Path<(String, String)>,
+    Json(body): Json<TestEmailRequest>,
+) -> Result<Json<()>, Error> {
+    let election = elections::handlers::find_election_by_admin(&state.db, &election_id, &admin_uuid).await?;
+
+    let config_model = super::find_by_election(&state.db, &election_id).await?;
+
+    let smtp_config = SmtpConfig {
+        smtp_host: config_model.smtp_host,
+        smtp_username: config_model.smtp_username,
+        smtp_password: config_model.smtp_password,
+        from_name: config_model.from_name,
+        from_email: config_model.from_email,
+    };
+
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("stvote.eu");
+    let base_url = format!("https://{}", host);
+
+    let result = crate::email::send_test_email(
+        &smtp_config,
+        &body.to_email,
+        &election.title,
+        &election_id,
+        &base_url,
+    );
+
+    match result.error {
+        Some(e) => Err(Error::Internal(format!("Test email failed: {}", e))),
+        None => Ok(Json(())),
+    }
 }

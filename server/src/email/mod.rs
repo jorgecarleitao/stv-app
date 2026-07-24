@@ -8,7 +8,6 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct SmtpConfig {
     pub smtp_host: String,
-    pub smtp_port: u16,
     pub smtp_username: String,
     pub smtp_password: String,
     pub from_name: String,
@@ -83,9 +82,7 @@ pub fn send_token_email(
         .map_err(|e| format!("Invalid SMTP host: {}", e))
         .and_then(|mut builder| {
             builder = builder.credentials(creds);
-            if config.smtp_port != 0 {
-                builder = builder.port(config.smtp_port);
-            }
+            builder = builder.port(587u16);
             Ok(builder.build())
         });
 
@@ -102,6 +99,87 @@ pub fn send_token_email(
         Ok(_) => SendResult {
             error: None,
         },
+        Err(e) => SendResult {
+            error: Some(format!("SMTP send failed: {}", e)),
+        },
+    }
+}
+
+pub fn send_test_email(
+    config: &SmtpConfig,
+    to_email: &str,
+    election_title: &str,
+    election_id: &str,
+    base_url: &str,
+) -> SendResult {
+    let subject = format!("{} — SMTP Test", election_title);
+    let body = format!(
+        "This is a test email from the STVote election system.\n\
+         Your SMTP configuration is working correctly.\n\n\
+         When you send ballot tokens, voters will receive an email with a link like:\n\
+         {base_url}/elections/{election_id}/tokens/<TOKEN>\n\n\
+         SMTP Host: {host}\n\
+         From: {from_name} <{from_email}>\n\n\
+         You can safely disregard this message.",
+        base_url = base_url,
+        election_id = election_id,
+        host = config.smtp_host,
+        from_name = config.from_name,
+        from_email = config.from_email,
+    );
+
+    let from_addr = match format!("{} <{}>", config.from_name, config.from_email).parse() {
+        Ok(a) => a,
+        Err(e) => {
+            return SendResult {
+                error: Some(format!("Invalid from address: {}", e)),
+            }
+        }
+    };
+
+    let to_addr = match to_email.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            return SendResult {
+                error: Some(format!("Invalid to address '{}': {}", to_email, e)),
+            }
+        }
+    };
+
+    let email = match Message::builder()
+        .from(from_addr)
+        .to(to_addr)
+        .subject(subject)
+        .header(ContentType::TEXT_PLAIN)
+        .body(body)
+    {
+        Ok(e) => e,
+        Err(e) => {
+            return SendResult {
+                error: Some(format!("Failed to build email: {}", e)),
+            }
+        }
+    };
+
+    let creds = Credentials::new(config.smtp_username.clone(), config.smtp_password.clone());
+
+    let mailer = match SmtpTransport::starttls_relay(&config.smtp_host)
+        .map_err(|e| format!("Invalid SMTP host: {}", e))
+        .and_then(|mut builder| {
+            builder = builder.credentials(creds);
+            builder = builder.port(587u16);
+            Ok(builder.build())
+        }) {
+        Ok(m) => m,
+        Err(e) => {
+            return SendResult {
+                error: Some(e),
+            }
+        }
+    };
+
+    match mailer.send(&email) {
+        Ok(_) => SendResult { error: None },
         Err(e) => SendResult {
             error: Some(format!("SMTP send failed: {}", e)),
         },

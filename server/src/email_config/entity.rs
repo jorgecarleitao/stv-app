@@ -7,7 +7,6 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub election_id: String,
     pub smtp_host: String,
-    pub smtp_port: i32,
     pub smtp_username: String,
     pub smtp_password: String,
     pub from_name: String,

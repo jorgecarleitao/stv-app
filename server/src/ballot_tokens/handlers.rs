@@ -163,7 +163,6 @@ pub async fn send_emails(
 
     let smtp_config = SmtpConfig {
         smtp_host: config_model.smtp_host,
-        smtp_port: config_model.smtp_port as u16,
         smtp_username: config_model.smtp_username,
         smtp_password: config_model.smtp_password,
         from_name: config_model.from_name,

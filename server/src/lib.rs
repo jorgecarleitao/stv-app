@@ -428,6 +428,7 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
             email_config::handlers::upsert_email_config,
             email_config::handlers::get_email_config,
             email_config::handlers::delete_email_config,
+            email_config::handlers::send_test_email,
             ballots::handlers::get_ballots_by_election,
             ballots::handlers::get_ballot,
             ballots::handlers::put_ballot,
@@ -457,6 +458,7 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
                 elections::ElectionResponse,
                 email_config::handlers::EmailConfigResponse,
                 email_config::handlers::UpsertEmailConfigRequest,
+                email_config::handlers::TestEmailRequest,
                 ballot_tokens::handlers::SendEmailsRequest,
                 ballot_tokens::handlers::SendEmailResult,
                 ballot_tokens::handlers::MarkSentBody,
@@ -533,6 +535,10 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
             put(email_config::handlers::upsert_email_config)
                 .get(email_config::handlers::get_email_config)
                 .delete(email_config::handlers::delete_email_config),
+        )
+        .route(
+            "/{election_id}/admin/{admin_uuid}/email-config/test",
+            post(email_config::handlers::send_test_email),
         )
         .route(
             "/{election_id}/tokens/{token_id}",
