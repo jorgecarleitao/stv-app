@@ -7,6 +7,8 @@ It supports the full election lifecycle: setup, secure ballot distribution, voti
 * [stv-app](https://github.com/jorgecarleitao/stv-app)
 * [stv-app-frontend](https://github.com/jorgecarleitao/stv-app-frontend)
 
+Live version [https://stvote.eu](https://stvote.eu)
+
 ## Features
 
 - **Full Election Workflow:**
