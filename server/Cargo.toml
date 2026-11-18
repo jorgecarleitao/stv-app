@@ -20,7 +20,7 @@ tower-http = { workspace = true }
 
 # database
 sea-orm = { version = "1.0", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
-sea-orm-migration = "1.0"
+sea-orm-migration = "2.0"
 
 # election
 # Pinned to a git rev until a crates.io release includes the structured

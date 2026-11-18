@@ -5,4 +5,4 @@ edition = "2021"
 publish = false
 
 [dependencies]
-sea-orm-migration = "1.0"
+sea-orm-migration = "2.0"
