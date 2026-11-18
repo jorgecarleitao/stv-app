@@ -7,7 +7,7 @@ use chrono::Utc;
 use sea_orm::{ColumnTrait, DbConn, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use tracing;
-use utoipa::ToSchema;
+use utoipa::{OpenApi, ToSchema};
 
 pub mod ballot_tokens;
 pub mod ballots;
@@ -403,13 +403,8 @@ pub(crate) async fn get_or_compute_result(
     Ok(result)
 }
 
-pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
-    use axum::http::Method;
-    use tower_http::cors::{Any, CorsLayer};
-    use utoipa::OpenApi;
-
-    #[derive(OpenApi)]
-    #[openapi(
+#[derive(utoipa::OpenApi)]
+#[openapi(
         paths(
             health,
             get_election,
@@ -480,7 +475,15 @@ pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
             description = "API for Single Transferable Vote (STV) election system",
         )
     )]
-    struct ApiDoc;
+pub struct ApiDoc;
+
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
+
+pub fn create_app(db: DbConn) -> Result<Router<()>, String> {
+    use axum::http::Method;
+    use tower_http::cors::{Any, CorsLayer};
 
     let state = AppState { db };
 
