@@ -15,7 +15,7 @@ fn run_election(
             .map(|(votes, ranks)| CombinedBallot { votes, ranks })
             .collect(),
     };
-    counting::stv_droop(election).unwrap().log().clone()
+    counting::count(election).unwrap().log().clone()
 }
 
 fn all_actions(log: &CountingLog) -> Vec<&CountingLogAction> {

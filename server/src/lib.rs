@@ -307,7 +307,7 @@ async fn simulate(
         }
     }
 
-    counting::stv_droop(election.clone())
+    counting::count(election.clone())
         .map_err(error::Error::BadRequest)
         .map(Json)
 }
@@ -374,9 +374,9 @@ pub(crate) async fn get_or_compute_result(
         groups,
         candidate_groups,
     );
-    let result = counting::stv_droop(election).map_err(|e| {
+    let result = counting::count(election).map_err(|e| {
         error::Error::Internal(format!(
-            "STV counting failed for {}: {:?}",
+            "Counting failed for {}: {:?}",
             election_uuid, e
         ))
     })?;

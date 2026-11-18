@@ -318,7 +318,7 @@ fn generate_report_html(
 
     let mut results_html = String::new();
 
-    if let Some(group_results) = result.group_results() {
+    if let counting::ElectionResult::StvMdGrouped { group_results, .. } = result {
         // Grouped results: show per-group sections
         let mut groups_info = String::new();
         if !election.groups.0.is_empty() {
@@ -389,7 +389,7 @@ fn generate_report_html(
         results_html.push_str(&elected_table);
 
         let mut pairwise_html = String::new();
-        if let Some(matrix) = result.pairwise_matrix() {
+        if let counting::ElectionResult::StvMdCoperland { pairwise_matrix: matrix, .. } = result {
             pairwise_html.push_str("<h2>Pairwise Comparison Matrix (Copeland)</h2>\n");
             pairwise_html.push_str("<table>\n<tr><th></th>");
             for c in candidates {
