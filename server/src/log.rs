@@ -1,5 +1,7 @@
-use regex::Regex;
+use num::Zero;
 use serde::{Deserialize, Serialize};
+use stv_rs::arithmetic::BigFixedDecimal9;
+use stv_rs::types::{ElectedReason, NotElectedReason, TranscriptEvent};
 use utoipa::ToSchema;
 
 /// Parsed STV counting log output
@@ -18,8 +20,6 @@ pub struct CountingLog {
 pub struct CountingLogHeader {
     /// Title of the election
     pub title: String,
-    /// Name of the counting software package
-    pub package_name: String,
     /// Counting rule used (e.g. Droop)
     pub rule: String,
     /// Arithmetic precision description
@@ -30,8 +30,6 @@ pub struct CountingLogHeader {
     pub ballots: usize,
     /// Quota required for election
     pub quota: String,
-    /// Omega value used in surplus transfer calculations
-    pub omega: String,
 }
 
 /// A candidate in the election
@@ -69,27 +67,25 @@ pub struct CountingLogAction {
 pub enum CountingLogActionType {
     /// Begin the count
     BeginCount,
-    /// A candidate has been elected
-    Elect { candidate: String },
-    /// A candidate has been elected with remaining votes to transfer
-    ElectRemaining { candidate: String },
-    /// Surplus votes have been redistributed
+    /// A candidate has been elected, with the reason
+    /// (`exceeds_quota` or `remaining`)
+    Elect { candidate: String, reason: String },
+    /// Surplus votes have been redistributed; the reason says how the
+    /// iteration ended (`elected`, `stable_surplus`, `low_surplus`)
     Iterate { reason: String },
-    /// A candidate has been defeated with a reason
-    Defeat { reason: String, candidate: String },
-    /// A candidate has been defeated as the last remaining
-    DefeatRemaining { candidate: String },
+    /// A candidate has been defeated, with the reason
+    /// (`stable_surplus`, `low_surplus` or `remaining`)
+    Defeat { candidate: String, reason: String },
     /// A tie between candidates was broken by random selection
     BreakTie { candidates: Vec<String>, defeated: String },
     /// The count is complete
     CountComplete,
 }
 
-/// Vote count for a single candidate at a point in the count
+/// Vote count for a single candidate at a point in the count.
+/// Index-aligned with [`CountingLog::candidates`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CountingLogCandidateCount {
-    /// Candidate name
-    pub name: String,
     /// Candidate status at this point in the count
     pub status: CountingLogCandidateStatus,
     /// Number of votes (as a decimal string)
@@ -123,314 +119,174 @@ pub struct CountingLogStats {
     pub surplus: String,
 }
 
-pub fn parse_log(raw: &str) -> CountingLog {
-    let lines: Vec<&str> = raw.lines().collect();
+fn elected_reason(reason: &ElectedReason) -> String {
+    match reason {
+        ElectedReason::ExceedsQuota => "exceeds_quota".to_string(),
+        ElectedReason::Remaining => "remaining".to_string(),
+        ElectedReason::Other => "other".to_string(),
+    }
+}
 
-    let re_header_title = Regex::new(r"^Election:\s*(.+)$").unwrap();
-    let re_candidate = Regex::new(r"^\tAdd (eligible|withdrawn):\s*(.+)$").unwrap();
-    let re_round = Regex::new(r"^Round\s+(\d+):$").unwrap();
-    let re_action = Regex::new(r"^Action:\s+(.+)$").unwrap();
+fn not_elected_reason(reason: &NotElectedReason) -> String {
+    match reason {
+        NotElectedReason::StableSurplus => "stable_surplus".to_string(),
+        NotElectedReason::LowSurplus => "low_surplus".to_string(),
+        NotElectedReason::Remaining => "remaining".to_string(),
+        NotElectedReason::Other => "other".to_string(),
+    }
+}
 
-    let mut header = None;
-    let mut candidates = Vec::new();
-    let mut rounds: Vec<CountingLogRound> = Vec::new();
-    let mut current_round: Option<CountingLogRound> = None;
-    let mut current_action: Option<CountingLogAction> = None;
+/// Builds a [`CountingLog`] from the structured transcript emitted by stv-rs
+pub fn transcript_to_log(
+    transcript: &[TranscriptEvent<BigFixedDecimal9>],
+    candidate_names: &[String],
+    mut header: CountingLogHeader,
+) -> CountingLog
+{
+    let num_candidates = candidate_names.len();
+    let mut builder = LogBuilder {
+        candidate_names,
+        candidates: candidate_names
+            .iter()
+            .map(|name| CountingLogCandidate {
+                name: name.clone(),
+                withdrawn: false,
+            })
+            .collect(),
+        statuses: vec![CountingLogCandidateStatus::Hopeful; num_candidates],
+        tallies: vec![BigFixedDecimal9::zero(); num_candidates],
+        exhausted: BigFixedDecimal9::zero(),
+        quota: BigFixedDecimal9::zero(),
+        surplus: BigFixedDecimal9::zero(),
+        rounds: Vec::new(),
+        seen_count: false,
+    };
 
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-
-        if let Some(caps) = re_header_title.captures(line) {
-            let title = caps[1].to_string();
-            let (parsed, new_i) = parse_header(&lines, i + 1, title);
-            header = Some(parsed);
-            i = new_i;
-            continue;
-        }
-
-        if let Some(caps) = re_candidate.captures(line) {
-            candidates.push(CountingLogCandidate {
-                name: caps[2].to_string(),
-                withdrawn: caps.get(1).unwrap().as_str() == "withdrawn",
-            });
-            i += 1;
-            continue;
-        }
-
-        if let Some(caps) = re_round.captures(line) {
-            let round_number: usize = caps[1].parse().unwrap_or(0);
-            if let Some(cur) = current_action.take() {
-                if let Some(ref mut r) = current_round {
-                    r.actions.push(cur);
+    for (idx, event) in transcript.iter().enumerate() {
+        match event {
+            TranscriptEvent::Withdrawn(i) => {
+                builder.candidates[*i].withdrawn = true;
+                builder.statuses[*i] = CountingLogCandidateStatus::Defeated;
+            }
+            TranscriptEvent::KeepFactors(_) => {}
+            TranscriptEvent::Count { tallies, exhausted } => {
+                builder.tallies.clone_from(tallies);
+                builder.exhausted = exhausted.clone();
+                if builder.seen_count {
+                    // The reason an iteration stopped is only known from the
+                    // next election/defeat event, so look ahead.
+                    let reason = transcript[idx..]
+                        .iter()
+                        .skip(1)
+                        .find_map(|e| match e {
+                            TranscriptEvent::Elected(..) => Some("elected".to_string()),
+                            TranscriptEvent::NotElected(_, r) => Some(not_elected_reason(r)),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "count".to_string());
+                    builder.push_action(CountingLogActionType::Iterate { reason });
+                } else {
+                    builder.seen_count = true;
+                    builder.start_round(0);
+                    builder.push_action(CountingLogActionType::BeginCount);
                 }
             }
-            if let Some(cur) = current_round.take() {
-                rounds.push(cur);
+            TranscriptEvent::Quota(q) => builder.quota = q.clone(),
+            TranscriptEvent::Surplus(s) => builder.surplus = s.clone(),
+            TranscriptEvent::StartRound(round) => {
+                // Transcript rounds are 1-based; CountingLog rounds are 0-based.
+                builder.start_round(round.saturating_sub(1));
             }
-            current_round = Some(CountingLogRound {
-                round_number,
-                actions: Vec::new(),
-            });
-            i += 1;
-            continue;
-        }
-
-        if let Some(caps) = re_action.captures(line) {
-            if let Some(cur) = current_action.take() {
-                if let Some(ref mut r) = current_round {
-                    r.actions.push(cur);
-                }
+            TranscriptEvent::Elected(i, reason) => {
+                builder.statuses[*i] = CountingLogCandidateStatus::Elected;
+                let action = CountingLogActionType::Elect {
+                    candidate: builder.name(*i),
+                    reason: elected_reason(reason),
+                };
+                builder.push_action(action);
             }
-
-            if current_round.is_none() {
-                current_round = Some(CountingLogRound {
-                    round_number: 0,
-                    actions: Vec::new(),
-                });
+            TranscriptEvent::NotElected(i, reason) => {
+                builder.statuses[*i] = CountingLogCandidateStatus::Defeated;
+                let action = CountingLogActionType::Defeat {
+                    candidate: builder.name(*i),
+                    reason: not_elected_reason(reason),
+                };
+                builder.push_action(action);
             }
-
-            let action_str = caps[1].to_string();
-            let action_type = parse_action_type(&action_str);
-            current_action = Some(CountingLogAction {
-                action_type,
-                candidate_counts: Vec::new(),
-                stats: CountingLogStats {
-                    quota: String::new(),
-                    votes: String::new(),
-                    residual: String::new(),
-                    total: String::new(),
-                    surplus: String::new(),
-                },
-            });
-            i += 1;
-            continue;
-        }
-
-        if let Some(ref mut action) = current_action {
-            if parse_action_line(line, action) {
-                i += 1;
-                continue;
+            TranscriptEvent::BreakTie { list, chosen } => {
+                let action = CountingLogActionType::BreakTie {
+                    candidates: list.iter().map(|i| builder.name(*i)).collect(),
+                    defeated: builder.name(*chosen),
+                };
+                builder.push_action(action);
             }
         }
-
-        i += 1;
     }
 
-    if let Some(cur) = current_action.take() {
-        if let Some(ref mut r) = current_round {
-            r.actions.push(cur);
-        }
-    }
-    if let Some(cur) = current_round.take() {
-        rounds.push(cur);
+    builder.start_round(0); // ensure at least one round exists
+    builder.push_action(CountingLogActionType::CountComplete);
+    if header.quota.is_empty() {
+        header.quota = builder.quota.to_string();
     }
 
     CountingLog {
-        header: header.unwrap_or(CountingLogHeader {
-            title: String::new(),
-            package_name: String::new(),
-            rule: String::new(),
-            arithmetic: String::new(),
-            seats: 0,
-            ballots: 0,
-            quota: String::new(),
-            omega: String::new(),
-        }),
-        candidates,
-        rounds,
+        header,
+        candidates: builder.candidates,
+        rounds: builder.rounds,
     }
 }
 
-pub(crate) fn build_position_map(candidate_order: &[String]) -> std::collections::HashMap<&str, usize> {
-    candidate_order
-        .iter()
-        .enumerate()
-        .map(|(i, name)| (name.as_str(), i))
-        .collect()
+struct LogBuilder<'a> {
+    candidate_names: &'a [String],
+    candidates: Vec<CountingLogCandidate>,
+    statuses: Vec<CountingLogCandidateStatus>,
+    tallies: Vec<BigFixedDecimal9>,
+    exhausted: BigFixedDecimal9,
+    quota: BigFixedDecimal9,
+    surplus: BigFixedDecimal9,
+    rounds: Vec<CountingLogRound>,
+    seen_count: bool,
 }
 
-/// Re-order candidate_counts in each action to match the original candidate position order.
-pub fn sort_candidate_counts(log: &mut CountingLog, candidate_order: &[String]) {
-    let position = build_position_map(candidate_order);
-    for round in &mut log.rounds {
-        for action in &mut round.actions {
-            action.candidate_counts.sort_by_key(|c| {
-                position
-                    .get(c.name.as_str())
-                    .copied()
-                    .unwrap_or(usize::MAX)
+impl LogBuilder<'_> {
+    fn name(&self, i: usize) -> String {
+        self.candidate_names[i].clone()
+    }
+
+    fn start_round(&mut self, round_number: usize) {
+        if self.rounds.last().map(|r| r.round_number) < Some(round_number) {
+            self.rounds.push(CountingLogRound {
+                round_number,
+                actions: Vec::new(),
             });
         }
     }
-}
 
-/// Sort a single slice of candidate counts using a pre-built position map.
-/// Shared between log processing and export display.
-pub(crate) fn sort_candidate_count_slice(
-    counts: &mut [CountingLogCandidateCount],
-    position: &std::collections::HashMap<&str, usize>,
-) {
-    counts.sort_by_key(|c| position.get(c.name.as_str()).copied().unwrap_or(usize::MAX));
-}
-
-fn parse_header(lines: &[&str], mut i: usize, title: String) -> (CountingLogHeader, usize) {
-    let re_header_field = Regex::new(r"^\t(.+):\s*(.+)$").unwrap();
-    let re_package_name = Regex::new(r"^\t(\S+)$").unwrap();
-
-    let mut pkg = String::new();
-    let mut rule = String::new();
-    let mut arithmetic = String::new();
-    let mut seats = 0usize;
-    let mut ballots = 0usize;
-    let mut quota = String::new();
-    let mut omega = String::new();
-
-    while i < lines.len() {
-        if lines[i].trim().is_empty() {
-            i += 1;
-            continue;
-        }
-        if lines[i].starts_with("\tAdd ") {
-            break;
-        }
-        if let Some(fc) = re_header_field.captures(lines[i]) {
-            let key = fc[1].trim();
-            let val = fc[2].trim();
-            match key {
-                "Rule" => rule = val.to_string(),
-                "Arithmetic" => arithmetic = val.to_string(),
-                "Seats" => seats = val.parse().unwrap_or(0),
-                "Ballots" => ballots = val.parse().unwrap_or(0),
-                "Quota" => quota = val.to_string(),
-                "Omega" => omega = val.to_string(),
-                _ => {}
-            }
-            i += 1;
-        } else if let Some(fc) = re_package_name.captures(lines[i]) {
-            pkg = fc[1].to_string();
-            i += 1;
-        } else {
-            break;
-        }
-    }
-
-    (
-        CountingLogHeader {
-            title,
-            package_name: pkg,
-            rule,
-            arithmetic,
-            seats,
-            ballots,
-            quota,
-            omega,
-        },
-        i,
-    )
-}
-
-fn parse_action_line(line: &str, action: &mut CountingLogAction) -> bool {
-    let re_candidate_count_list =
-        Regex::new(r"^\tDefeated:\s*(.+?)\s*\(([0-9.]+)\)$").unwrap();
-    let re_candidate_count =
-        Regex::new(r"^\t(Elected|Hopeful|Defeated):\s*(.+?)\s*\(([^)]+)\)$").unwrap();
-    let re_stats = Regex::new(r"^\t(Quota|Votes|Residual|Total|Surplus):\s*(.+)$").unwrap();
-
-    if let Some(caps) = re_candidate_count_list.captures(line) {
-        let names_str = caps.get(1).unwrap().as_str().trim();
-        let votes = caps[2].to_string();
-        for name in names_str.split(", ") {
-            action.candidate_counts.push(CountingLogCandidateCount {
-                name: name.trim().to_string(),
-                status: CountingLogCandidateStatus::Defeated,
-                votes: votes.clone(),
-            });
-        }
-        return true;
-    }
-
-    if let Some(caps) = re_candidate_count.captures(line) {
-        let status = match caps.get(1).unwrap().as_str() {
-            "Elected" => CountingLogCandidateStatus::Elected,
-            "Hopeful" => CountingLogCandidateStatus::Hopeful,
-            "Defeated" => CountingLogCandidateStatus::Defeated,
-            _ => unreachable!(),
-        };
-        action.candidate_counts.push(CountingLogCandidateCount {
-            name: caps.get(2).unwrap().as_str().trim().to_string(),
-            status,
-            votes: caps[3].to_string(),
+    fn push_action(&mut self, action_type: CountingLogActionType) {
+        let votes = self
+            .tallies
+            .iter()
+            .fold(BigFixedDecimal9::zero(), |acc, t| acc + t.clone());
+        let total = votes.clone() + self.exhausted.clone();
+        let round = self.rounds.last_mut().expect("a round must exist");
+        round.actions.push(CountingLogAction {
+            action_type,
+            candidate_counts: self
+                .statuses
+                .iter()
+                .zip(&self.tallies)
+                .map(|(status, votes)| CountingLogCandidateCount {
+                    status: status.clone(),
+                    votes: votes.to_string(),
+                })
+                .collect(),
+            stats: CountingLogStats {
+                quota: self.quota.to_string(),
+                votes: votes.to_string(),
+                residual: self.exhausted.to_string(),
+                total: total.to_string(),
+                surplus: self.surplus.to_string(),
+            },
         });
-        return true;
-    }
-
-    if let Some(caps) = re_stats.captures(line) {
-        let key = caps.get(1).unwrap().as_str();
-        let val = caps[2].trim().to_string();
-        match key {
-            "Quota" => action.stats.quota = val,
-            "Votes" => action.stats.votes = val,
-            "Residual" => action.stats.residual = val,
-            "Total" => action.stats.total = val,
-            "Surplus" => action.stats.surplus = val,
-            _ => {}
-        }
-        return true;
-    }
-
-    false
-}
-
-fn parse_action_type(action_str: &str) -> CountingLogActionType {
-    if action_str == "Begin Count" {
-        return CountingLogActionType::BeginCount;
-    }
-    if action_str == "Count Complete" {
-        return CountingLogActionType::CountComplete;
-    }
-    if let Some(rest) = action_str.strip_prefix("Elect remaining: ") {
-        return CountingLogActionType::ElectRemaining {
-            candidate: rest.to_string(),
-        };
-    }
-    if let Some(rest) = action_str.strip_prefix("Elect: ") {
-        return CountingLogActionType::Elect {
-            candidate: rest.to_string(),
-        };
-    }
-    if let Some(rest) = action_str.strip_prefix("Defeat remaining: ") {
-        return CountingLogActionType::DefeatRemaining {
-            candidate: rest.to_string(),
-        };
-    }
-    if let Some(rest) = action_str.strip_prefix("Break tie (defeat): ") {
-        let parts: Vec<&str> = rest.splitn(2, " -> ").collect();
-        let candidates_str = parts.first().unwrap_or(&"");
-        let defeated = parts.get(1).unwrap_or(&"").to_string();
-        let candidates = candidates_str
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .split(", ")
-            .map(|s| s.to_string())
-            .collect();
-        return CountingLogActionType::BreakTie { candidates, defeated };
-    }
-    if let Some(rest) = action_str.strip_prefix("Iterate (") {
-        let reason = rest.trim_end_matches(')').to_string();
-        return CountingLogActionType::Iterate { reason };
-    }
-    if let Some(rest) = action_str.strip_prefix("Defeat (") {
-        let reason_and_candidate = rest.trim_end_matches(')');
-        if let Some(paren_pos) = reason_and_candidate.find("): ") {
-            let reason = reason_and_candidate[..paren_pos].to_string();
-            let candidate = reason_and_candidate[paren_pos + 3..].to_string();
-            return CountingLogActionType::Defeat { reason, candidate };
-        }
-    }
-
-    CountingLogActionType::Iterate {
-        reason: action_str.to_string(),
     }
 }
-

@@ -23,8 +23,9 @@ sea-orm = { version = "1.0", features = ["runtime-tokio-rustls", "sqlx-sqlite"] 
 sea-orm-migration = "1.0"
 
 # election
-stv-rs = "0.5.1"
-regex = "1"
+# Pinned to a git rev until a crates.io release includes the structured
+# transcript (https://github.com/gendx/stv-rs/issues/3, latest: f09b23d).
+stv-rs = { git = "https://github.com/gendx/stv-rs", rev = "f09b23d99d5e55a5c64823fe01a25af8ac5c5886" }
 
 # arithmetic for STV
 num = "0.4"

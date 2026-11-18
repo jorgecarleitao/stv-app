@@ -268,8 +268,6 @@ fn stv_droop_single(election: Election) -> Result<ElectionResult, String> {
     use stv_rs::arithmetic::BigFixedDecimal9;
     use stv_rs::types::{Ballot, Candidate, Election};
 
-    let mut log = Vec::new();
-
     let candidates = election
         .candidates()
         .iter()
@@ -289,14 +287,16 @@ fn stv_droop_single(election: Election) -> Result<ElectionResult, String> {
         .ballots(ballots)
         .build();
 
+    // Omega = 10^-omega_exponent, the precision floor for surplus transfers.
+    let omega_exponent = 6;
     let mut result = stv_rs::meek::stv_droop::<
         BigInt,
         BigFixedDecimal9,
     >(
-        &mut log,
+        &mut std::io::sink(),
         &stv_election,
         "election",
-        6,
+        omega_exponent,
         stv_rs::cli::Parallel::No,
         None,
         true,
@@ -305,8 +305,19 @@ fn stv_droop_single(election: Election) -> Result<ElectionResult, String> {
     )
     .unwrap();
 
-    let mut counting_log = crate::log::parse_log(&String::from_utf8(log).unwrap());
-    crate::log::sort_candidate_counts(&mut counting_log, election.candidates());
+    let header = crate::log::CountingLogHeader {
+        title: String::new(),
+        rule: "Droop".to_string(),
+        arithmetic: "BigFixedDecimal9".to_string(),
+        seats: election.seats(),
+        ballots: election.ballots().iter().map(|b| b.votes).sum(),
+        quota: String::new(),
+    };
+    let counting_log = crate::log::transcript_to_log(
+        &result.transcript,
+        election.candidates(),
+        header,
+    );
 
     match election.election_type() {
         ElectionType::StvMd => {

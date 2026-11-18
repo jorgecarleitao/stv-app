@@ -261,16 +261,12 @@ fn ballots_json_data(ballots: Vec<ballots::Model>) -> Vec<BallotJsonEntry> {
 fn action_type_label(at: &CountingLogActionType) -> String {
     match at {
         CountingLogActionType::BeginCount => "Begin Count".to_string(),
-        CountingLogActionType::Elect { candidate } => format!("Elect: {}", candidate),
-        CountingLogActionType::ElectRemaining { candidate } => {
-            format!("Elect remaining: {}", candidate)
+        CountingLogActionType::Elect { candidate, reason } => {
+            format!("Elect ({}): {}", reason, candidate)
         }
         CountingLogActionType::Iterate { reason } => format!("Iterate ({})", reason),
-        CountingLogActionType::Defeat { reason, candidate } => {
+        CountingLogActionType::Defeat { candidate, reason } => {
             format!("Defeat ({}): {}", reason, candidate)
-        }
-        CountingLogActionType::DefeatRemaining { candidate } => {
-            format!("Defeat remaining: {}", candidate)
         }
         CountingLogActionType::BreakTie { candidates, defeated } => {
             let cs = candidates.join(", ");
@@ -488,7 +484,6 @@ fn generate_report_html(
 
 fn generate_log_html(log: &log::CountingLog, candidates: &[String]) -> String {
     let mut html = String::new();
-    let position = log::build_position_map(candidates);
 
     for round in &log.rounds {
         html.push_str(&format!("<h3>Round {}</h3>\n", round.round_number));
@@ -504,9 +499,8 @@ fn generate_log_html(log: &log::CountingLog, candidates: &[String]) -> String {
             ));
             html.push_str("<tr><th>Candidate</th><th>Status</th><th>Votes</th></tr>\n");
 
-            let mut sorted = action.candidate_counts.clone();
-            log::sort_candidate_count_slice(&mut sorted, &position);
-            for cc in &sorted {
+            // candidate_counts is index-aligned with `candidates`.
+            for (name, cc) in candidates.iter().zip(&action.candidate_counts) {
                 let status_cls = match cc.status {
                     CountingLogCandidateStatus::Elected => "elected",
                     CountingLogCandidateStatus::Defeated => "defeated",
@@ -514,7 +508,7 @@ fn generate_log_html(log: &log::CountingLog, candidates: &[String]) -> String {
                 };
                 html.push_str(&format!(
                     "<tr class=\"candidate-row\"><td>{}</td><td class=\"{}\">{}</td><td>{}</td></tr>\n",
-                    html_escape(&cc.name),
+                    html_escape(name),
                     status_cls,
                     status_label(&cc.status),
                     html_escape(&cc.votes),

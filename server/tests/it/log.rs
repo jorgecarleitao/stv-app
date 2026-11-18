@@ -39,7 +39,6 @@ fn test_header_matches_input() {
     assert!(!log.header.rule.is_empty());
     assert!(!log.header.arithmetic.is_empty());
     assert!(!log.header.quota.is_empty());
-    assert!(!log.header.omega.is_empty());
 }
 
 #[test]
@@ -150,10 +149,8 @@ fn test_elect_actions_reference_valid_candidates() {
     );
     for action in all_actions(&log) {
         match &action.action_type {
-            CountingLogActionType::Elect { candidate }
-            | CountingLogActionType::ElectRemaining { candidate }
-            | CountingLogActionType::Defeat { candidate, .. }
-            | CountingLogActionType::DefeatRemaining { candidate } => {
+            CountingLogActionType::Elect { candidate, .. }
+            | CountingLogActionType::Defeat { candidate, .. } => {
                 assert!(
                     candidates.contains(&candidate.as_str()),
                     "action references unknown candidate: {candidate}"
@@ -201,11 +198,10 @@ fn test_candidate_counts_have_nonempty_votes() {
         ],
     );
     for action in all_actions(&log) {
-        for cc in &action.candidate_counts {
+        for (i, cc) in action.candidate_counts.iter().enumerate() {
             assert!(
                 !cc.votes.is_empty(),
-                "candidate {} has empty votes in action {:?}",
-                cc.name,
+                "candidate #{i} has empty votes in action {:?}",
                 action.action_type
             );
         }
