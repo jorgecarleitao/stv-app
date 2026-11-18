@@ -19,7 +19,7 @@ zip = "2"
 tower-http = { workspace = true }
 
 # database
-sea-orm = { version = "1.0", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
+sea-orm = { version = "2.0", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
 sea-orm-migration = "1.0"
 
 # election
