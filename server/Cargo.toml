@@ -6,21 +6,21 @@ edition = "2024"
 [dependencies]
 # API
 axum = { workspace = true }
-utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid"] }
 # log
 tracing = { workspace = true }
 # serde
 serde = { workspace = true, features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-zip = "2"
+zip = "9"
 
 # cors
 tower-http = { workspace = true }
 
 # database
-sea-orm = { version = "1.0", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
-sea-orm-migration = "1.0"
+sea-orm = { version = "2", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
+sea-orm-migration = "2"
 
 # election
 # Pinned to a git rev until a crates.io release includes the structured
@@ -41,9 +41,9 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 pretty_assertions = "1"
-axum-test = "17"
+axum-test = "21"
 test-log = {version = "0.2", features = ["trace"]}
 reqwest = {version = "*", features = ["blocking"]}
 regex = "1"
-rand = "0.8"
+rand = "0.10"
 migration = { path = "./migration" }

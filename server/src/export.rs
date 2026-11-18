@@ -2,7 +2,7 @@ use std::io::Write;
 
 use chrono::{DateTime, Utc};
 use sea_orm::{ColumnTrait, DbConn, EntityTrait, QueryFilter};
-use zip::{ZipWriter, write::FileOptions, CompressionMethod};
+use zip::{ZipWriter, write::SimpleFileOptions, CompressionMethod};
 
 use crate::ballots;
 use crate::ballot_tokens;
@@ -96,7 +96,7 @@ pub async fn build_export_zip(
 }
 
 fn write_text(zip: &mut ZipWriter<std::io::Cursor<Vec<u8>>>, name: &str, content: &str) -> Result<(), Error> {
-    let opts: FileOptions<'static, ()> = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let opts: SimpleFileOptions = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.start_file(name, opts)
         .map_err(|e| Error::Internal(format!("Failed to start file in ZIP: {}", e)))?;
     zip.write_all(content.as_bytes())

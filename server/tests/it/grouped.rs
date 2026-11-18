@@ -17,7 +17,7 @@ async fn setup_db() -> Result<sea_orm::DbConn, String> {
 async fn make_server() -> Result<(TestServer, sea_orm::DbConn), String> {
     let db = setup_db().await?;
     let app = create_app(db.clone()).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
     Ok((server, db))
 }
 
@@ -122,7 +122,7 @@ async fn test_grouped_election_simulate() -> Result<(), String> {
 async fn test_grouped_election_seat_mismatch_rejected() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let sim_resp = server
         .post("/api/simulate")
@@ -184,7 +184,7 @@ async fn test_grouped_election_empty_group_rejected() -> Result<(), String> {
 async fn test_grouped_election_update() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     // Create
     let create_resp = server

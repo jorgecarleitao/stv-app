@@ -25,7 +25,7 @@ async fn setup_db() -> Result<sea_orm::DbConn, String> {
 async fn test_health() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app);
 
     let r = server.get("/api/health").await;
     assert_eq!(r.status_code(), 200);
@@ -36,7 +36,7 @@ async fn test_health() -> Result<(), String> {
 async fn test_election_workflow() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     // Step 1: Create an election
     let create_resp = server
@@ -217,7 +217,7 @@ async fn test_election_workflow() -> Result<(), String> {
 async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     // Create an election
     let create_resp = server
@@ -384,7 +384,7 @@ async fn test_cannot_modify_candidates_after_token_redemption() -> Result<(), St
 async fn test_create_tokens_with_recipients() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     // Create election
     let create_resp = server
@@ -466,7 +466,7 @@ async fn test_create_tokens_with_recipients() -> Result<(), String> {
 async fn test_email_config_crud() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     // Create an election
     let create_resp = server
@@ -550,7 +550,7 @@ async fn test_email_config_crud() -> Result<(), String> {
 async fn test_send_emails_without_config_returns_error() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     // Create election
     let create_resp = server
@@ -584,7 +584,7 @@ async fn test_send_emails_without_config_returns_error() -> Result<(), String> {
 async fn test_send_emails_with_recipients_without_email_set_returns_error() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     // Create election
     let create_resp = server
@@ -638,7 +638,7 @@ async fn test_send_emails_with_recipients_without_email_set_returns_error() -> R
 async fn test_create_tokens_with_usize_backward_compat() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let create_resp = server
         .post("/api/elections")
@@ -676,7 +676,7 @@ async fn test_create_tokens_with_usize_backward_compat() -> Result<(), String> {
 async fn test_patch_token_mark_sent() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let create_resp = server
         .post("/api/elections")

@@ -27,7 +27,7 @@ fn read_zip_entry(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &
 async fn test_export_open_election_returns_404() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let create_resp = server
         .post("/api/elections")
@@ -53,7 +53,7 @@ async fn test_export_open_election_returns_404() -> Result<(), String> {
 async fn test_export_closed_election() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let create_resp = server
         .post("/api/elections")
@@ -115,7 +115,7 @@ async fn test_export_closed_election() -> Result<(), String> {
     let cursor = std::io::Cursor::new(resp.as_bytes().as_ref());
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
 
-    let names: Vec<String> = archive.file_names().map(|n| n.to_string()).collect();
+    let names: Vec<String> = archive.file_names().map(|n| n.unwrap().to_string()).collect();
     for required in &["README.md", "election.json", "tokens.json", "ballots.json", "results.json", "report.html"] {
         assert!(names.contains(&required.to_string()), "missing {}", required);
     }
@@ -177,7 +177,7 @@ async fn test_export_closed_election() -> Result<(), String> {
 async fn test_export_no_ballots() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let create_resp = server
         .post("/api/elections")
@@ -220,7 +220,7 @@ async fn test_export_no_ballots() -> Result<(), String> {
 async fn test_export_abstentions() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let create_resp = server
         .post("/api/elections")
@@ -309,7 +309,7 @@ async fn test_export_abstentions() -> Result<(), String> {
 async fn test_export_with_include_emails() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let create_resp = server
         .post("/api/elections")
@@ -355,7 +355,7 @@ async fn test_export_with_include_emails() -> Result<(), String> {
 async fn test_export_not_found() -> Result<(), String> {
     let db = setup_db().await?;
     let app = create_app(db).map_err(|e| e.to_string())?;
-    let server = TestServer::builder().mock_transport().build(app).unwrap();
+    let server = TestServer::builder().mock_transport().build(app);
 
     let resp = server
         .get("/api/elections/nonexistent-uuid/export")
