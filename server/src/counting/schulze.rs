@@ -56,7 +56,12 @@ fn winner_set(strengths: &[Vec<usize>]) -> Vec<usize> {
         .collect()
 }
 
-pub type SchulzeOutcome = (CountingLog, Vec<Elected>, Vec<Vec<usize>>);
+pub type SchulzeOutcome = (
+    CountingLog,
+    Vec<Elected>,
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+);
 
 pub fn count(election: &SchulzeElection) -> Result<SchulzeOutcome, String> {
     let candidates = election.candidates();
@@ -87,7 +92,7 @@ pub fn count(election: &SchulzeElection) -> Result<SchulzeOutcome, String> {
         candidate: candidates[winner_idx].clone(),
         id: winner_idx,
     }];
-    Ok((log, elected, matrix))
+    Ok((log, elected, matrix, strengths))
 }
 
 fn first_preference_tallies(ballots: &[CombinedBallot], n: usize) -> Vec<usize> {

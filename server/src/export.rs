@@ -148,6 +148,7 @@ Full election results including elected candidates, pairwise comparison matrix (
 - `elected` — List of elected candidates in order (a single winner for `schulze`)
 - `order` — (Copeland only) Final candidate ranking by Copeland score
 - `pairwise_matrix` — (Copeland and Schulze) Head-to-head comparison matrix
+- `beatpaths` — (Schulze only) Strongest-path strengths `p[i][j]`; i beats j iff `p[i][j] > p[j][i]`
 - `log` — (Non-grouped only) Structured counting log with per-round actions, candidate counts, and stats
 - `groups` — (Grouped only) Group configuration
 - `group_results` — (Grouped only) Per-group results with sub-election, log, and elected candidates
@@ -395,6 +396,32 @@ fn generate_report_html(
             pairwise_html.push_str(&format!(
                 "<h2>Pairwise Comparison Matrix ({label})</h2>\n"
             ));
+            pairwise_html.push_str("<table>\n<tr><th></th>");
+            for c in candidates {
+                pairwise_html.push_str(&format!("<th>{}</th>", html_escape(c)));
+            }
+            pairwise_html.push_str("</tr>\n");
+            for (i, row) in matrix.iter().enumerate() {
+                pairwise_html.push_str(&format!("<tr><th>{}</th>", html_escape(&candidates[i])));
+                for (j, val) in row.iter().enumerate() {
+                    let cls = if i == j {
+                        " class=\"diag\""
+                    } else if *val > matrix[j][i] {
+                        " class=\"win\""
+                    } else if *val < matrix[j][i] {
+                        " class=\"loss\""
+                    } else {
+                        ""
+                    };
+                    pairwise_html.push_str(&format!("<td{}>{}</td>", cls, val));
+                }
+                pairwise_html.push_str("</tr>\n");
+            }
+            pairwise_html.push_str("</table>\n");
+        }
+        if let counting::ElectionResult::Schulze(r) = result {
+            let matrix = &r.beatpaths;
+            pairwise_html.push_str("<h2>Beatpath Strengths (strongest path from row to column)</h2>\n");
             pairwise_html.push_str("<table>\n<tr><th></th>");
             for c in candidates {
                 pairwise_html.push_str(&format!("<th>{}</th>", html_escape(c)));

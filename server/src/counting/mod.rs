@@ -584,6 +584,9 @@ pub struct SchulzeResult {
     pub elected: Vec<Elected>,
     /// Head-to-head comparison matrix `m[i][j]` = ballots preferring i over j
     pub pairwise_matrix: Vec<Vec<usize>>,
+    /// Strongest-path (beatpath) strengths `p[i][j]`; `i` beats `j` iff
+    /// `p[i][j] > p[j][i]`
+    pub beatpaths: Vec<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -645,12 +648,13 @@ pub fn count(election: Election) -> Result<ElectionResult, String> {
             }))
         }
         Election::Schulze(e) => {
-            let (log, elected, pairwise_matrix) = schulze::count(&e)?;
+            let (log, elected, pairwise_matrix, beatpaths) = schulze::count(&e)?;
             Ok(ElectionResult::Schulze(SchulzeResult {
                 election: Election::Schulze(e),
                 log,
                 elected,
                 pairwise_matrix,
+                beatpaths,
             }))
         }
     }

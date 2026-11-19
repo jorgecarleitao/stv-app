@@ -49,6 +49,9 @@ async fn test_schulze_simulate_cycle_winner() -> Result<(), String> {
     // Pairwise matrix is included for audit
     assert_eq!(result["pairwise_matrix"][0][1], 5); // A over B
     assert_eq!(result["pairwise_matrix"][2][0], 4); // C over A
+    // Beatpath strengths: A's strongest path to C goes via B: min(5, 5) = 5 > 4
+    assert_eq!(result["beatpaths"][0][2], 5);
+    assert_eq!(result["beatpaths"][2][0], 4);
     // Log records the beatpath election
     let actions = &result["log"]["rounds"][0]["actions"];
     let elect = actions
