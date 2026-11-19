@@ -65,6 +65,19 @@ pub enum ElectionConfig {
         groups: Vec<counting::GroupConfig>,
         candidate_groups: Vec<String>,
     },
+    Schulze {
+        id: String,
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        candidates: Vec<String>,
+        seats: u32,
+        start_time: chrono::DateTime<Utc>,
+        end_time: chrono::DateTime<Utc>,
+        number_of_ballots: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ballots: Option<Vec<String>>,
+    },
 }
 
 impl ElectionConfig {
@@ -73,6 +86,7 @@ impl ElectionConfig {
             ElectionConfig::StvMd { id, .. } => id,
             ElectionConfig::StvMdCoperland { id, .. } => id,
             ElectionConfig::StvMdGrouped { id, .. } => id,
+            ElectionConfig::Schulze { id, .. } => id,
         }
     }
     pub fn candidates(&self) -> &[String] {
@@ -80,6 +94,7 @@ impl ElectionConfig {
             ElectionConfig::StvMd { candidates, .. } => candidates,
             ElectionConfig::StvMdCoperland { candidates, .. } => candidates,
             ElectionConfig::StvMdGrouped { candidates, .. } => candidates,
+            ElectionConfig::Schulze { candidates, .. } => candidates,
         }
     }
     pub fn seats(&self) -> u32 {
@@ -87,6 +102,7 @@ impl ElectionConfig {
             ElectionConfig::StvMd { seats, .. } => *seats,
             ElectionConfig::StvMdCoperland { seats, .. } => *seats,
             ElectionConfig::StvMdGrouped { seats, .. } => *seats,
+            ElectionConfig::Schulze { seats, .. } => *seats,
         }
     }
     pub fn ballots(&self) -> &Option<Vec<String>> {
@@ -94,6 +110,7 @@ impl ElectionConfig {
             ElectionConfig::StvMd { ballots, .. } => ballots,
             ElectionConfig::StvMdCoperland { ballots, .. } => ballots,
             ElectionConfig::StvMdGrouped { ballots, .. } => ballots,
+            ElectionConfig::Schulze { ballots, .. } => ballots,
         }
     }
 }
@@ -232,6 +249,12 @@ async fn get_election(
             start_time: election.start_time, end_time: election.end_time,
             number_of_ballots: potential_voters, ballots: ballots_opt,
             groups: cfg.groups().to_vec(), candidate_groups: cfg.candidate_groups().to_vec(),
+        },
+        counting::SystemConfig::Schulze { .. } => ElectionConfig::Schulze {
+            id: election.uuid, title: election.title, description: election.description,
+            candidates: election.candidates.0.clone(), seats: election.num_seats,
+            start_time: election.start_time, end_time: election.end_time,
+            number_of_ballots: potential_voters, ballots: ballots_opt,
         },
     };
 
@@ -393,6 +416,8 @@ pub(crate) async fn get_or_compute_result(
                 counting::Election,
                 counting::ElectionResult,
                 counting::Elected,
+                counting::SchulzeElection,
+                counting::SchulzeResult,
                 counting::GroupConfig,
                 counting::GroupResult,
                 log::CountingLog,

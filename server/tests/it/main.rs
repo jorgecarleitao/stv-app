@@ -1,6 +1,7 @@
 mod export;
 mod grouped;
 mod log;
+mod schulze;
 
 use axum_test::TestServer;
 use serde_json::json;

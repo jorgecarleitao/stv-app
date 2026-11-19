@@ -67,6 +67,11 @@ fn build_election_response(model: entity::Model, is_locked: bool) -> Result<Elec
             groups: cfg.groups().to_vec(),
             candidate_groups: cfg.candidate_groups().to_vec(),
         }),
+        SystemConfig::Schulze { tie_break_seed } => Ok(ElectionResponse::Schulze {
+            uuid, admin_uuid, title, description, candidates, num_seats,
+            start_time, end_time, is_locked,
+            tie_break_seed: *tie_break_seed,
+        }),
     }
 }
 
@@ -104,7 +109,7 @@ pub async fn create_election(
     let Json(req) =
         payload.map_err(|e| Error::BadRequest(format!("Invalid election data: {}", e)))?;
 
-    let config = req.system_config().map_err(Error::BadRequest)?;
+    let config = req.system_config(None).map_err(Error::BadRequest)?;
 
     // Validate the cross-field invariants (e.g. group seats vs total seats)
     counting::to_election_with_config(
@@ -189,7 +194,14 @@ pub async fn update_election_by_admin(
 
     let election = find_election_by_admin(&txn, &election_id, &admin_uuid).await?;
 
-    let new_config = req.system_config().map_err(Error::BadRequest)?;
+    // Preserve the existing tie-break seed when the update omits it
+    let existing_tie_break_seed = match &election.config {
+        SystemConfig::Schulze { tie_break_seed } => Some(*tie_break_seed),
+        _ => None,
+    };
+    let new_config = req
+        .system_config(existing_tie_break_seed)
+        .map_err(Error::BadRequest)?;
 
     // Validate the cross-field invariants (e.g. group seats vs total seats)
     counting::to_election_with_config(

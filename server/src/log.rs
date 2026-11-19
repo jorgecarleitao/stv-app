@@ -76,8 +76,15 @@ pub enum CountingLogActionType {
     /// A candidate has been defeated, with the reason
     /// (`stable_surplus`, `low_surplus` or `remaining`)
     Defeat { candidate: String, reason: String },
-    /// A tie between candidates was broken by random selection
+    /// A tie between candidates was broken by the tie-break order.
+    /// stv-rs defaults the tie order to candidate list order (the app does
+    /// not override it), so the earliest-listed tied candidate is defeated.
     BreakTie { candidates: Vec<String>, defeated: String },
+    /// A tie between candidates was broken by a seeded random lot
+    /// (Schulze), selecting the winner. The seed is the election's
+    /// `tie_break_seed`, stored in the election config, so the draw
+    /// is reproducible and auditable.
+    Lot { candidates: Vec<String>, winner: String },
     /// The count is complete
     CountComplete,
 }

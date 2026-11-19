@@ -39,6 +39,20 @@ pub enum CreateElectionRequest {
         groups: Vec<GroupConfig>,
         candidate_groups: Vec<String>,
     },
+    Schulze {
+        title: String,
+        description: Option<String>,
+        #[schema(example = json!(["Alice", "Bob", "Charlie"]))]
+        candidates: Vec<String>,
+        #[schema(example = 1)]
+        num_seats: u32,
+        start_time: chrono::DateTime<chrono::Utc>,
+        end_time: chrono::DateTime<chrono::Utc>,
+        /// Seed for the random tie-break lot. If omitted, the server
+        /// generates one at creation time and persists it.
+        #[serde(default)]
+        tie_break_seed: Option<u64>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -79,6 +93,18 @@ pub enum ElectionResponse {
         groups: Vec<GroupConfig>,
         candidate_groups: Vec<String>,
     },
+    Schulze {
+        uuid: String,
+        admin_uuid: String,
+        title: String,
+        description: Option<String>,
+        candidates: Vec<String>,
+        num_seats: u32,
+        start_time: chrono::DateTime<chrono::Utc>,
+        end_time: chrono::DateTime<chrono::Utc>,
+        is_locked: bool,
+        tie_break_seed: u64,
+    },
 }
 
 impl CreateElectionRequest {
@@ -87,6 +113,7 @@ impl CreateElectionRequest {
             CreateElectionRequest::StvMd { .. } => crate::counting::ElectionType::StvMd,
             CreateElectionRequest::StvMdCoperland { .. } => crate::counting::ElectionType::StvMdCoperland,
             CreateElectionRequest::StvMdGrouped { .. } => crate::counting::ElectionType::StvMdGrouped,
+            CreateElectionRequest::Schulze { .. } => crate::counting::ElectionType::Schulze,
         }
     }
 
@@ -95,6 +122,7 @@ impl CreateElectionRequest {
             CreateElectionRequest::StvMd { title, .. } => title,
             CreateElectionRequest::StvMdCoperland { title, .. } => title,
             CreateElectionRequest::StvMdGrouped { title, .. } => title,
+            CreateElectionRequest::Schulze { title, .. } => title,
         }
     }
 
@@ -103,6 +131,7 @@ impl CreateElectionRequest {
             CreateElectionRequest::StvMd { description, .. } => description,
             CreateElectionRequest::StvMdCoperland { description, .. } => description,
             CreateElectionRequest::StvMdGrouped { description, .. } => description,
+            CreateElectionRequest::Schulze { description, .. } => description,
         }
     }
 
@@ -111,6 +140,7 @@ impl CreateElectionRequest {
             CreateElectionRequest::StvMd { candidates, .. } => candidates,
             CreateElectionRequest::StvMdCoperland { candidates, .. } => candidates,
             CreateElectionRequest::StvMdGrouped { candidates, .. } => candidates,
+            CreateElectionRequest::Schulze { candidates, .. } => candidates,
         }
     }
 
@@ -119,6 +149,7 @@ impl CreateElectionRequest {
             CreateElectionRequest::StvMd { num_seats, .. } => *num_seats,
             CreateElectionRequest::StvMdCoperland { num_seats, .. } => *num_seats,
             CreateElectionRequest::StvMdGrouped { num_seats, .. } => *num_seats,
+            CreateElectionRequest::Schulze { num_seats, .. } => *num_seats,
         }
     }
 
@@ -127,6 +158,7 @@ impl CreateElectionRequest {
             CreateElectionRequest::StvMd { start_time, .. } => start_time,
             CreateElectionRequest::StvMdCoperland { start_time, .. } => start_time,
             CreateElectionRequest::StvMdGrouped { start_time, .. } => start_time,
+            CreateElectionRequest::Schulze { start_time, .. } => start_time,
         }
     }
 
@@ -135,11 +167,17 @@ impl CreateElectionRequest {
             CreateElectionRequest::StvMd { end_time, .. } => end_time,
             CreateElectionRequest::StvMdCoperland { end_time, .. } => end_time,
             CreateElectionRequest::StvMdGrouped { end_time, .. } => end_time,
+            CreateElectionRequest::Schulze { end_time, .. } => end_time,
         }
     }
 
-    /// The system-specific config to persist in the `elections.config` column
-    pub fn system_config(&self) -> Result<SystemConfig, String> {
+    /// The system-specific config to persist in the `elections.config` column.
+    ///
+    /// `existing_tie_break_seed` is the seed of the currently stored config (if
+    /// any): on update, an omitted seed preserves the existing one instead of
+    /// generating a new one, so the config (and thus the lot) is stable for the
+    /// life of the election.
+    pub fn system_config(&self, existing_tie_break_seed: Option<u64>) -> Result<SystemConfig, String> {
         match self {
             CreateElectionRequest::StvMd { .. } => Ok(SystemConfig::StvMd {}),
             CreateElectionRequest::StvMdCoperland { .. } => Ok(SystemConfig::StvMdCoperland {}),
@@ -148,6 +186,13 @@ impl CreateElectionRequest {
                     groups.clone(),
                     candidate_groups.clone(),
                 )?))
+            }
+            CreateElectionRequest::Schulze { tie_break_seed, .. } => {
+                Ok(SystemConfig::Schulze {
+                    tie_break_seed: tie_break_seed
+                        .or(existing_tie_break_seed)
+                        .unwrap_or_else(rand::random),
+                })
             }
         }
     }

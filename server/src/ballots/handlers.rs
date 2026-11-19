@@ -130,7 +130,8 @@ pub async fn put_ballot(
                 match &ballot {
                     counting::CastBallotRequest::StvMd(b)
                     | counting::CastBallotRequest::StvMdCoperland(b)
-                    | counting::CastBallotRequest::StvMdGrouped(b) => {
+                    | counting::CastBallotRequest::StvMdGrouped(b)
+                    | counting::CastBallotRequest::Schulze(b) => {
                         if b.ranks
                             .iter()
                             .filter_map(|&c| c)

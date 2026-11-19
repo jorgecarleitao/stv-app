@@ -22,6 +22,7 @@ fn run_election(
         counting::ElectionResult::StvMd(r) => r.log,
         counting::ElectionResult::StvMdCoperland(_) => panic!("expected an stv-md result"),
         counting::ElectionResult::StvMdGrouped(_) => panic!("expected a non-grouped result"),
+        counting::ElectionResult::Schulze(_) => panic!("expected an stv-md result"),
     }
 }
 

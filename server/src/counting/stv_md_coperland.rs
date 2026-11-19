@@ -1,41 +1,19 @@
 use std::collections::HashMap;
 
+use super::pairwise::pairwise_matrix;
 use super::{CombinedBallot, Elected, RankedElection, stv};
 
 fn pairwise_order(
     ballots: &[CombinedBallot],
     n_candidates: usize,
 ) -> (HashMap<String, usize>, Vec<Vec<usize>>) {
-    let ballot_ranks: Vec<Vec<Option<usize>>> = ballots.iter().map(|b| b.ranks.clone()).collect();
+    let matrix = pairwise_matrix(ballots, n_candidates);
 
+    // Copeland score: number of pairwise wins
     let mut scores = vec![0; n_candidates];
-    let mut matrix = vec![vec![0; n_candidates]; n_candidates];
-
     for i in 0..n_candidates {
         for j in 0..n_candidates {
-            if i == j {
-                continue;
-            }
-            let mut i_beats_j_total = 0;
-            let mut j_beats_i_total = 0;
-
-            for (ranks, ballot) in ballot_ranks.iter().zip(ballots.iter()) {
-                let r_i = ranks[i];
-                let r_j = ranks[j];
-                if let (Some(r_i), Some(r_j)) = (r_i, r_j) {
-                    if r_i < r_j {
-                        i_beats_j_total += ballot.votes;
-                    } else if r_j < r_i {
-                        j_beats_i_total += ballot.votes;
-                    }
-                } else if let (Some(_), None) = (r_i, r_j) {
-                    i_beats_j_total += ballot.votes;
-                } else if let (None, Some(_)) = (r_i, r_j) {
-                    j_beats_i_total += ballot.votes;
-                }
-            }
-            matrix[i][j] = i_beats_j_total;
-            if i_beats_j_total > j_beats_i_total {
+            if i != j && matrix[i][j] > matrix[j][i] {
                 scores[i] += 1;
             }
         }

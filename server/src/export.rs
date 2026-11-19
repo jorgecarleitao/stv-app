@@ -114,7 +114,7 @@ fn generate_readme(
         "\
 # Election Export: {title}
 
-This archive contains the complete data for this STV election.
+This archive contains the complete data for this election.
 
 ## Files
 
@@ -124,7 +124,7 @@ Election configuration and metadata in JSON format.
 - `description` — Optional description
 - `candidates` — List of candidate names
 - `seats` — Number of seats to fill
-- `election_type` — Voting algorithm used (`stv-md`, `stv-md-coperland`, or `stv-md-grouped`)
+- `election_type` — Voting algorithm used (`stv-md`, `stv-md-coperland`, `stv-md-grouped`, or `schulze`)
 - `start_time` / `end_time` — Election period (ISO 8601)
 - `config` — System-specific configuration, tagged by `election_type` (e.g. group definitions for `stv-md-grouped`)
 
@@ -144,10 +144,10 @@ All ballots (cast and abstained).
 
 ### `results.json`
 Full election results including elected candidates, pairwise comparison matrix (Copeland), and the complete structured counting log.
-- `type` — Result type (`stv-md`, `stv-md-coperland`, or `stv-md-grouped`)
-- `elected` — List of elected candidates in order
+- `type` — Result type (`stv-md`, `stv-md-coperland`, `stv-md-grouped`, or `schulze`)
+- `elected` — List of elected candidates in order (a single winner for `schulze`)
 - `order` — (Copeland only) Final candidate ranking by Copeland score
-- `pairwise_matrix` — (Copeland only) Head-to-head comparison matrix
+- `pairwise_matrix` — (Copeland and Schulze) Head-to-head comparison matrix
 - `log` — (Non-grouped only) Structured counting log with per-round actions, candidate counts, and stats
 - `groups` — (Grouped only) Group configuration
 - `group_results` — (Grouped only) Per-group results with sub-election, log, and elected candidates
@@ -260,6 +260,10 @@ fn action_type_label(at: &CountingLogActionType) -> String {
         CountingLogActionType::BreakTie { candidates, defeated } => {
             let cs = candidates.join(", ");
             format!("Break tie (defeat): [{}] -> {}", cs, defeated)
+        }
+        CountingLogActionType::Lot { candidates, winner } => {
+            let cs = candidates.join(", ");
+            format!("Lot (seeded tie-break): [{}] -> {}", cs, winner)
         }
         CountingLogActionType::CountComplete => "Count Complete".to_string(),
     }
@@ -382,9 +386,15 @@ fn generate_report_html(
         results_html.push_str(&elected_table);
 
         let mut pairwise_html = String::new();
-        if let counting::ElectionResult::StvMdCoperland(r) = result {
-            let matrix = &r.pairwise_matrix;
-            pairwise_html.push_str("<h2>Pairwise Comparison Matrix (Copeland)</h2>\n");
+        let pairwise = match result {
+            counting::ElectionResult::StvMdCoperland(r) => Some((&r.pairwise_matrix, "Copeland")),
+            counting::ElectionResult::Schulze(r) => Some((&r.pairwise_matrix, "Schulze")),
+            _ => None,
+        };
+        if let Some((matrix, label)) = pairwise {
+            pairwise_html.push_str(&format!(
+                "<h2>Pairwise Comparison Matrix ({label})</h2>\n"
+            ));
             pairwise_html.push_str("<table>\n<tr><th></th>");
             for c in candidates {
                 pairwise_html.push_str(&format!("<th>{}</th>", html_escape(c)));
@@ -414,6 +424,7 @@ fn generate_report_html(
             counting::ElectionResult::StvMd(r) => Some(&r.log),
             counting::ElectionResult::StvMdCoperland(r) => Some(&r.log),
             counting::ElectionResult::StvMdGrouped(_) => None,
+            counting::ElectionResult::Schulze(r) => Some(&r.log),
         };
         if let Some(log) = log {
             results_html.push_str(&format!(
