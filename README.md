@@ -1,13 +1,13 @@
-# STV Election App
+# Open Vote — Election App (API)
 
-This project provides a complete platform for running, managing, and explaining Single Transferable Vote (STV) elections.
-It supports the full election lifecycle: setup, secure ballot distribution, voting, tallying, and transparent result explanation.
+This project provides the API of [Open Vote](https://open-vote.eu) (formerly STVote at stvote.eu), a platform for running, managing, and explaining ranked-ballot elections.
+It supports multiple voting systems — STV (Meek/Droop), Copeland-ordered STV, grouped STV, and Schulze for single-winner elections — and the full election lifecycle: setup, secure ballot distribution, voting, tallying, and transparent result explanation.
 
 * [stv-app-infrastructure](https://github.com/jorgecarleitao/stv-app-infrastructure)
 * [stv-app](https://github.com/jorgecarleitao/stv-app)
 * [stv-app-frontend](https://github.com/jorgecarleitao/stv-app-frontend)
 
-Live version [https://stvote.eu](https://stvote.eu)
+Live version [https://open-vote.eu](https://open-vote.eu)
 
 ## Features
 
