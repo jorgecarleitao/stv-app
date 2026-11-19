@@ -41,14 +41,8 @@ pub async fn build_export_zip(
 
     let ballots_for_counting: Vec<counting::Ballot> = all_ballots
         .iter()
-        .filter_map(|b| {
-            b.ranks
-                .as_ref()
-                .map(|ranks| counting::Ballot { ranks: ranks.0.clone() })
-        })
+        .filter_map(|b| b.data.clone().map(|data| data.into_ballot()))
         .collect();
-
-    let election_type = crate::parse_election_type(&election.election_type);
 
     let result = if !ballots_for_counting.is_empty() {
         Some(
@@ -57,10 +51,8 @@ pub async fn build_export_zip(
                 election_uuid,
                 election.candidates.0.clone(),
                 election.num_seats,
-                election_type,
                 ballots_for_counting,
-                election.groups.0.clone(),
-                election.candidate_groups.0.clone(),
+                &election.config,
             )
             .await?,
         )
@@ -72,7 +64,7 @@ pub async fn build_export_zip(
 
     let tokens_len = all_tokens.len();
     let ballots_len = all_ballots.len();
-    let cast = all_ballots.iter().filter(|b| b.ranks.is_some()).count();
+    let cast = all_ballots.iter().filter(|b| b.data.is_some()).count();
 
     let cursor = std::io::Cursor::new(Vec::new());
     let mut zip = ZipWriter::new(cursor);
@@ -134,8 +126,7 @@ Election configuration and metadata in JSON format.
 - `seats` — Number of seats to fill
 - `election_type` — Voting algorithm used (`stv-md`, `stv-md-coperland`, or `stv-md-grouped`)
 - `start_time` / `end_time` — Election period (ISO 8601)
-- `groups` — (Grouped elections only) Group definitions with name and seat count
-- `candidate_groups` — (Grouped elections only) Group assignment per candidate
+- `config` — System-specific configuration, tagged by `election_type` (e.g. group definitions for `stv-md-grouped`)
 
 ### `tokens.json`
 All ballot tokens issued for this election.
@@ -147,9 +138,9 @@ All ballot tokens issued for this election.
 - `candidate_groups` — (Grouped elections only) Group assignment per candidate
 
 ### `ballots.json`
-All cast ballots with their ranking preferences.
+All ballots (cast and abstained).
 - `id` — Unique ballot identifier
-- `ranks` — Array of rank preferences per candidate position (null = unranked). The index in the array corresponds to the candidate position in `election.json` candidates list. The value is the rank number (0-based), or null if the voter did not rank that candidate.
+- `data` — The cast ballot payload, tagged by `election_type` (null = abstained). For STV elections the payload has an `election_type` field and a `ranks` field; `ranks` is an array of rank preferences per candidate position (null = unranked). The index in the array corresponds to the candidate position in `election.json` candidates list. The value is the rank number (0-based), or null if the voter did not rank that candidate.\n
 
 ### `results.json`
 Full election results including elected candidates, pairwise comparison matrix (Copeland), and the complete structured counting log.
@@ -183,7 +174,7 @@ Human-readable election report. Self-contained HTML (no external dependencies). 
         desc_line = desc_line,
         candidates = election.candidates.0.join(", "),
         seats = election.num_seats,
-        etype = election.election_type,
+        etype = election.config.election_type().as_str(),
         start = election.start_time.to_rfc3339(),
         end = election.end_time.to_rfc3339(),
         tokens = tokens_len,
@@ -201,8 +192,7 @@ struct ExportElectionJson {
     election_type: String,
     start_time: DateTime<Utc>,
     end_time: DateTime<Utc>,
-    groups: Vec<crate::counting::GroupConfig>,
-    candidate_groups: Vec<String>,
+    config: crate::counting::SystemConfig,
 }
 
 fn election_config_json(election: &elections::entity::Model) -> ExportElectionJson {
@@ -211,18 +201,17 @@ fn election_config_json(election: &elections::entity::Model) -> ExportElectionJs
         description: election.description.clone(),
         candidates: election.candidates.0.clone(),
         seats: election.num_seats,
-        election_type: election.election_type.clone(),
+        election_type: election.config.election_type().as_str().to_string(),
         start_time: election.start_time,
         end_time: election.end_time,
-        groups: election.groups.0.clone(),
-        candidate_groups: election.candidate_groups.0.clone(),
+        config: election.config.clone(),
     }
 }
 
 #[derive(serde::Serialize)]
 struct BallotJsonEntry {
     id: String,
-    ranks: Option<Vec<Option<usize>>>,
+    data: Option<crate::counting::CastBallotRequest>,
 }
 
 #[derive(serde::Serialize)]
@@ -253,7 +242,7 @@ fn ballots_json_data(ballots: Vec<ballots::Model>) -> Vec<BallotJsonEntry> {
         .into_iter()
         .map(|b| BallotJsonEntry {
             id: b.id,
-            ranks: b.ranks.map(|r| r.0),
+            data: b.data,
         })
         .collect()
 }
@@ -304,11 +293,15 @@ fn generate_report_html(
         .map(|d| format!("<p class=\"desc\">{}</p>", html_escape(d)))
         .unwrap_or_default();
 
+    let candidate_groups: &[String] = match &election.config {
+        counting::SystemConfig::StvMdGrouped(cfg) => cfg.candidate_groups(),
+        _ => &[],
+    };
     let candidates_html: String = candidates
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let group_info = election.candidate_groups.0.get(i)
+            let group_info = candidate_groups.get(i)
                 .map(|g| format!(" &mdash; <em>{}</em>", html_escape(g)))
                 .unwrap_or_default();
             format!("<li><strong>{}</strong> (index {}){}</li>", html_escape(c), i, group_info)
@@ -318,22 +311,22 @@ fn generate_report_html(
 
     let mut results_html = String::new();
 
-    if let counting::ElectionResult::StvMdGrouped { group_results, .. } = result {
+    if let counting::ElectionResult::StvMdGrouped(r) = result {
         // Grouped results: show per-group sections
         let mut groups_info = String::new();
-        if !election.groups.0.is_empty() {
+        if !r.groups.is_empty() {
             groups_info.push_str("<h2>Groups</h2>\n<ul>\n");
-            for g in &election.groups.0 {
+            for g in &r.groups {
                 groups_info.push_str(&format!(
                     "<li><strong>{}</strong> &mdash; {} seats</li>\n",
-                    html_escape(&g.name), g.seats
+                    html_escape(g.name()), g.seats()
                 ));
             }
             groups_info.push_str("</ul>\n");
         }
         results_html.push_str(&groups_info);
 
-        for gr in group_results {
+        for gr in &r.group_results {
             results_html.push_str(&format!(
                 "<h2>Group: {} ({} seats)</h2>\n",
                 html_escape(&gr.group), gr.seats
@@ -389,7 +382,8 @@ fn generate_report_html(
         results_html.push_str(&elected_table);
 
         let mut pairwise_html = String::new();
-        if let counting::ElectionResult::StvMdCoperland { pairwise_matrix: matrix, .. } = result {
+        if let counting::ElectionResult::StvMdCoperland(r) = result {
+            let matrix = &r.pairwise_matrix;
             pairwise_html.push_str("<h2>Pairwise Comparison Matrix (Copeland)</h2>\n");
             pairwise_html.push_str("<table>\n<tr><th></th>");
             for c in candidates {
@@ -416,7 +410,17 @@ fn generate_report_html(
         }
         results_html.push_str(&pairwise_html);
 
-        results_html.push_str(&format!("<h2>Counting Log</h2>\n{}", generate_log_html(result.log(), candidates)));
+        let log = match result {
+            counting::ElectionResult::StvMd(r) => Some(&r.log),
+            counting::ElectionResult::StvMdCoperland(r) => Some(&r.log),
+            counting::ElectionResult::StvMdGrouped(_) => None,
+        };
+        if let Some(log) = log {
+            results_html.push_str(&format!(
+                "<h2>Counting Log</h2>\n{}",
+                generate_log_html(log, candidates)
+            ));
+        }
     }
 
     format!(
@@ -473,7 +477,7 @@ fn generate_report_html(
         title = title,
         desc = desc,
         uuid = html_escape(&election.uuid),
-        etype = html_escape(&election.election_type),
+        etype = html_escape(election.config.election_type().as_str()),
         seats = election.num_seats,
         start = election.start_time.to_rfc3339(),
         end = election.end_time.to_rfc3339(),

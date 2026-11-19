@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{CombinedBallot, Elected, Election, ElectionResult, stv};
+use super::{CombinedBallot, Elected, RankedElection, stv};
 
 fn pairwise_order(
     ballots: &[CombinedBallot],
@@ -51,10 +51,14 @@ fn pairwise_order(
     (result, matrix)
 }
 
-pub fn count(election: Election) -> Result<ElectionResult, String> {
-    let outcome = stv::run(election.candidates(), election.seats(), election.ballots());
+pub fn count(
+    election: &RankedElection,
+) -> Result<(crate::log::CountingLog, Vec<Elected>, HashMap<String, usize>, Vec<Vec<usize>>), String> {
+    let candidates = election.candidates();
+    let ballots = election.ballots();
+    let outcome = stv::run(candidates, election.seats(), ballots);
 
-    let (order, pairwise_matrix) = pairwise_order(election.ballots(), election.candidates().len());
+    let (order, pairwise_matrix) = pairwise_order(ballots, candidates.len());
 
     let mut elected_ids = outcome.elected;
     elected_ids.sort_by_key(|&candidate_id| {
@@ -67,16 +71,10 @@ pub fn count(election: Election) -> Result<ElectionResult, String> {
     let elected = elected_ids
         .into_iter()
         .map(|e| Elected {
-            candidate: election.candidates()[e].clone(),
+            candidate: candidates[e].clone(),
             id: e,
         })
         .collect();
 
-    Ok(ElectionResult::StvMdCoperland {
-        election,
-        log: outcome.log,
-        elected,
-        order,
-        pairwise_matrix,
-    })
+    Ok((outcome.log, elected, order, pairwise_matrix))
 }

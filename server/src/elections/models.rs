@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::counting::GroupConfig;
+use crate::counting::{GroupConfig, GroupedConfig, SystemConfig};
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "election_type", rename_all = "kebab-case")]
@@ -138,17 +138,17 @@ impl CreateElectionRequest {
         }
     }
 
-    pub fn groups(&self) -> &[GroupConfig] {
+    /// The system-specific config to persist in the `elections.config` column
+    pub fn system_config(&self) -> Result<SystemConfig, String> {
         match self {
-            CreateElectionRequest::StvMdGrouped { groups, .. } => groups,
-            _ => &[],
-        }
-    }
-
-    pub fn candidate_groups(&self) -> &[String] {
-        match self {
-            CreateElectionRequest::StvMdGrouped { candidate_groups, .. } => candidate_groups,
-            _ => &[],
+            CreateElectionRequest::StvMd { .. } => Ok(SystemConfig::StvMd {}),
+            CreateElectionRequest::StvMdCoperland { .. } => Ok(SystemConfig::StvMdCoperland {}),
+            CreateElectionRequest::StvMdGrouped { groups, candidate_groups, .. } => {
+                Ok(SystemConfig::StvMdGrouped(GroupedConfig::try_new(
+                    groups.clone(),
+                    candidate_groups.clone(),
+                )?))
+            }
         }
     }
 }

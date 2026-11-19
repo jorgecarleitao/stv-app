@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use sea_orm::FromJsonQueryResult;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -16,10 +17,152 @@ pub enum ElectionType {
     StvMdGrouped,
 }
 
+impl ElectionType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ElectionType::StvMd => "stv-md",
+            ElectionType::StvMdCoperland => "stv-md-coperland",
+            ElectionType::StvMdGrouped => "stv-md-grouped",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "stv-md" => Some(ElectionType::StvMd),
+            "stv-md-coperland" => Some(ElectionType::StvMdCoperland),
+            "stv-md-grouped" => Some(ElectionType::StvMdGrouped),
+            _ => None,
+        }
+    }
+}
+
+/// Group definitions for a grouped election (`stv-md-grouped`).
+///
+/// Invariants (non-empty groups, unique group names, assignments referencing
+/// defined groups, every group having at least one candidate) are enforced at
+/// parse time by [`GroupedConfig::try_new`] and deserialization. Alignment of
+/// `candidate_groups` with `candidates` and the group-seats sum are enforced
+/// by [`StvMdGroupedElection::try_new`], which sees `candidates` and `seats`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(try_from = "GroupedConfigRaw")]
+pub struct GroupedConfig {
+    groups: Vec<GroupConfig>,
+    candidate_groups: Vec<String>,
+}
+
+/// Raw deserialization target for [`GroupedConfig`]; converted through
+/// `try_new` so invalid data is rejected at parse time.
+#[derive(Debug, Clone, Deserialize)]
+struct GroupedConfigRaw {
+    groups: Vec<GroupConfig>,
+    candidate_groups: Vec<String>,
+}
+
+impl TryFrom<GroupedConfigRaw> for GroupedConfig {
+    type Error = String;
+
+    fn try_from(raw: GroupedConfigRaw) -> Result<Self, String> {
+        Self::try_new(raw.groups, raw.candidate_groups)
+    }
+}
+
+impl GroupedConfig {
+    pub fn try_new(groups: Vec<GroupConfig>, candidate_groups: Vec<String>) -> Result<Self, String> {
+        if groups.is_empty() {
+            return Err("Groups list cannot be empty".to_string());
+        }
+        let mut names = std::collections::HashSet::new();
+        for group in &groups {
+            if !names.insert(group.name()) {
+                return Err(format!("Duplicate group name '{}'", group.name()));
+            }
+        }
+        for assignment in &candidate_groups {
+            if !groups.iter().any(|g| g.name() == assignment) {
+                return Err(format!("Candidate assigned to unknown group '{}'", assignment));
+            }
+        }
+        for group in &groups {
+            if !candidate_groups.iter().any(|g| g == group.name()) {
+                return Err(format!("No candidates assigned to group '{}'", group.name()));
+            }
+        }
+        Ok(Self {
+            groups,
+            candidate_groups,
+        })
+    }
+
+    pub fn groups(&self) -> &[GroupConfig] {
+        &self.groups
+    }
+    pub fn candidate_groups(&self) -> &[String] {
+        &self.candidate_groups
+    }
+}
+
+/// System-specific election configuration, stored as JSON in the
+/// `elections.config` column. Adding a new election system means adding
+/// one variant here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema, FromJsonQueryResult)]
+#[serde(tag = "election_type", rename_all = "kebab-case")]
+pub enum SystemConfig {
+    StvMd {},
+    StvMdCoperland {},
+    StvMdGrouped(GroupedConfig),
+}
+
+impl SystemConfig {
+    pub fn election_type(&self) -> ElectionType {
+        match self {
+            SystemConfig::StvMd {} => ElectionType::StvMd,
+            SystemConfig::StvMdCoperland {} => ElectionType::StvMdCoperland,
+            SystemConfig::StvMdGrouped(_) => ElectionType::StvMdGrouped,
+        }
+    }
+}
+
+/// A single group definition. Invariants (non-empty name, at least one seat)
+/// are enforced at parse time by [`GroupConfig::try_new`] and deserialization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(try_from = "GroupConfigRaw")]
 pub struct GroupConfig {
-    pub name: String,
-    pub seats: u32,
+    name: String,
+    seats: u32,
+}
+
+/// Raw deserialization target for [`GroupConfig`]; converted through `try_new`.
+#[derive(Debug, Clone, Deserialize)]
+struct GroupConfigRaw {
+    name: String,
+    seats: u32,
+}
+
+impl TryFrom<GroupConfigRaw> for GroupConfig {
+    type Error = String;
+
+    fn try_from(raw: GroupConfigRaw) -> Result<Self, String> {
+        Self::try_new(raw.name, raw.seats)
+    }
+}
+
+impl GroupConfig {
+    pub fn try_new(name: String, seats: u32) -> Result<Self, String> {
+        if name.is_empty() {
+            return Err("Group name cannot be empty".to_string());
+        }
+        if seats == 0 {
+            return Err(format!("Group '{}' must have at least one seat", name));
+        }
+        Ok(Self { name, seats })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn seats(&self) -> u32 {
+        self.seats
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -43,7 +186,7 @@ pub struct RankedBallot {
     pub ranks: Vec<Option<usize>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema, FromJsonQueryResult)]
 #[serde(tag = "election_type", rename_all = "kebab-case")]
 pub enum CastBallotRequest {
     StvMd(RankedBallot),
@@ -51,67 +194,237 @@ pub enum CastBallotRequest {
     StvMdGrouped(RankedBallot),
 }
 
+impl CastBallotRequest {
+    pub fn election_type(&self) -> ElectionType {
+        match self {
+            CastBallotRequest::StvMd(_) => ElectionType::StvMd,
+            CastBallotRequest::StvMdCoperland(_) => ElectionType::StvMdCoperland,
+            CastBallotRequest::StvMdGrouped(_) => ElectionType::StvMdGrouped,
+        }
+    }
+
+    /// Extract the ranked ballot used for counting.
+    pub fn into_ballot(self) -> Ballot {
+        match self {
+            CastBallotRequest::StvMd(b)
+            | CastBallotRequest::StvMdCoperland(b)
+            | CastBallotRequest::StvMdGrouped(b) => Ballot { ranks: b.ranks },
+        }
+    }
+}
+
+/// A ranked-ballot election (`stv-md`, `stv-md-coperland`).
+///
+/// Invariants are enforced at parse time — by [`RankedElection::try_new`] and
+/// by deserialization (which goes through `try_new` via `try_from`) — so a
+/// value of this type is always well-formed. `try_new` checks the raw fields
+/// before constructing; there is no `validate` on a constructed value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "election_type", rename_all = "kebab-case")]
-pub enum Election {
-    StvMd {
+#[serde(try_from = "RankedElectionRaw")]
+pub struct RankedElection {
+    candidates: Vec<String>,
+    seats: usize,
+    ballots: Vec<CombinedBallot>,
+}
+
+/// Raw deserialization target for [`RankedElection`]; converted through
+/// `try_new` so invalid data is rejected at parse time.
+#[derive(Debug, Clone, Deserialize)]
+struct RankedElectionRaw {
+    candidates: Vec<String>,
+    seats: usize,
+    ballots: Vec<CombinedBallot>,
+}
+
+impl TryFrom<RankedElectionRaw> for RankedElection {
+    type Error = String;
+
+    fn try_from(raw: RankedElectionRaw) -> Result<Self, String> {
+        Self::try_new(raw.candidates, raw.seats, raw.ballots)
+    }
+}
+
+impl RankedElection {
+    pub fn try_new(
         candidates: Vec<String>,
         seats: usize,
         ballots: Vec<CombinedBallot>,
-    },
-    StvMdCoperland {
-        candidates: Vec<String>,
-        seats: usize,
-        ballots: Vec<CombinedBallot>,
-    },
-    StvMdGrouped {
+    ) -> Result<Self, String> {
+        if candidates.is_empty() {
+            return Err("Candidates list cannot be empty".to_string());
+        }
+        if seats == 0 || seats > candidates.len() {
+            return Err("Invalid number of seats".to_string());
+        }
+        for ballot in &ballots {
+            for &rank in &ballot.ranks {
+                if let Some(idx) = rank {
+                    if idx >= candidates.len() {
+                        return Err("Invalid candidate index".to_string());
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            candidates,
+            seats,
+            ballots,
+        })
+    }
+
+    pub fn candidates(&self) -> &[String] {
+        &self.candidates
+    }
+    pub fn seats(&self) -> usize {
+        self.seats
+    }
+    pub fn ballots(&self) -> &[CombinedBallot] {
+        &self.ballots
+    }
+}
+
+/// A grouped STV election (`stv-md-grouped`).
+///
+/// In addition to the ranked-election invariants, the grouped invariants
+/// (candidate_groups aligned with candidates, group seats summing to total
+/// seats, every group having candidates) are enforced at parse time — by
+/// [`StvMdGroupedElection::try_new`] and by deserialization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(try_from = "StvMdGroupedElectionRaw")]
+pub struct StvMdGroupedElection {
+    candidates: Vec<String>,
+    seats: usize,
+    ballots: Vec<CombinedBallot>,
+    groups: Vec<GroupConfig>,
+    candidate_groups: Vec<String>,
+}
+
+impl StvMdGroupedElection {
+    pub fn try_new(
         candidates: Vec<String>,
         seats: usize,
         ballots: Vec<CombinedBallot>,
         groups: Vec<GroupConfig>,
         candidate_groups: Vec<String>,
-    },
+    ) -> Result<Self, String> {
+        if candidates.is_empty() {
+            return Err("Candidates list cannot be empty".to_string());
+        }
+        if seats == 0 || seats > candidates.len() {
+            return Err("Invalid number of seats".to_string());
+        }
+        for ballot in &ballots {
+            for &rank in &ballot.ranks {
+                if let Some(idx) = rank {
+                    if idx >= candidates.len() {
+                        return Err("Invalid candidate index".to_string());
+                    }
+                }
+            }
+        }
+        if candidate_groups.len() != candidates.len() {
+            return Err(format!(
+                "candidate_groups length ({}) must equal candidates length ({})",
+                candidate_groups.len(),
+                candidates.len()
+            ));
+        }
+        for assignment in &candidate_groups {
+            if !groups.iter().any(|g| g.name() == assignment) {
+                return Err(format!(
+                    "Candidate assigned to unknown group '{}'",
+                    assignment
+                ));
+            }
+        }
+        let total_group_seats: u32 = groups.iter().map(|g| g.seats()).sum();
+        if total_group_seats as usize != seats {
+            return Err(format!(
+                "Sum of group seats ({}) must equal total seats ({})",
+                total_group_seats, seats
+            ));
+        }
+        for group in &groups {
+            if !candidate_groups.iter().any(|g| g == group.name()) {
+                return Err(format!("No candidates assigned to group '{}'", group.name()));
+            }
+        }
+        Ok(Self {
+            candidates,
+            seats,
+            ballots,
+            groups,
+            candidate_groups,
+        })
+    }
+
+    pub fn candidates(&self) -> &[String] {
+        &self.candidates
+    }
+    pub fn seats(&self) -> usize {
+        self.seats
+    }
+    pub fn ballots(&self) -> &[CombinedBallot] {
+        &self.ballots
+    }
+    pub fn groups(&self) -> &[GroupConfig] {
+        &self.groups
+    }
+    pub fn candidate_groups(&self) -> &[String] {
+        &self.candidate_groups
+    }
+}
+
+/// Raw deserialization target for [`StvMdGroupedElection`]; converted through
+/// `try_new` so invalid data is rejected at parse time.
+#[derive(Debug, Clone, Deserialize)]
+struct StvMdGroupedElectionRaw {
+    candidates: Vec<String>,
+    seats: usize,
+    ballots: Vec<CombinedBallot>,
+    groups: Vec<GroupConfig>,
+    candidate_groups: Vec<String>,
+}
+
+impl TryFrom<StvMdGroupedElectionRaw> for StvMdGroupedElection {
+    type Error = String;
+
+    fn try_from(raw: StvMdGroupedElectionRaw) -> Result<Self, String> {
+        Self::try_new(
+            raw.candidates,
+            raw.seats,
+            raw.ballots,
+            raw.groups,
+            raw.candidate_groups,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "election_type", rename_all = "kebab-case")]
+pub enum Election {
+    StvMd(RankedElection),
+    StvMdCoperland(RankedElection),
+    StvMdGrouped(StvMdGroupedElection),
 }
 
 impl Election {
     pub fn candidates(&self) -> &[String] {
         match self {
-            Election::StvMd { candidates, .. } => candidates,
-            Election::StvMdCoperland { candidates, .. } => candidates,
-            Election::StvMdGrouped { candidates, .. } => candidates,
+            Election::StvMd(e) | Election::StvMdCoperland(e) => e.candidates(),
+            Election::StvMdGrouped(e) => e.candidates(),
         }
     }
     pub fn seats(&self) -> usize {
         match self {
-            Election::StvMd { seats, .. } => *seats,
-            Election::StvMdCoperland { seats, .. } => *seats,
-            Election::StvMdGrouped { seats, .. } => *seats,
+            Election::StvMd(e) | Election::StvMdCoperland(e) => e.seats(),
+            Election::StvMdGrouped(e) => e.seats(),
         }
     }
     pub fn ballots(&self) -> &[CombinedBallot] {
         match self {
-            Election::StvMd { ballots, .. } => ballots,
-            Election::StvMdCoperland { ballots, .. } => ballots,
-            Election::StvMdGrouped { ballots, .. } => ballots,
-        }
-    }
-    pub fn election_type(&self) -> ElectionType {
-        match self {
-            Election::StvMd { .. } => ElectionType::StvMd,
-            Election::StvMdCoperland { .. } => ElectionType::StvMdCoperland,
-            Election::StvMdGrouped { .. } => ElectionType::StvMdGrouped,
-        }
-    }
-    pub fn groups(&self) -> &[GroupConfig] {
-        match self {
-            Election::StvMdGrouped { groups, .. } => groups,
-            _ => &[],
-        }
-    }
-    pub fn candidate_groups(&self) -> &[String] {
-        match self {
-            Election::StvMdGrouped { candidate_groups, .. } => candidate_groups,
-            _ => &[],
+            Election::StvMd(e) | Election::StvMdCoperland(e) => e.ballots(),
+            Election::StvMdGrouped(e) => e.ballots(),
         }
     }
 }
@@ -139,82 +452,93 @@ pub struct GroupResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StvMdResult {
+    pub election: Election,
+    pub log: crate::log::CountingLog,
+    pub elected: Vec<Elected>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StvMdCoperlandResult {
+    pub election: Election,
+    pub log: crate::log::CountingLog,
+    pub elected: Vec<Elected>,
+    pub order: HashMap<String, usize>,
+    pub pairwise_matrix: Vec<Vec<usize>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StvMdGroupedResult {
+    pub election: Election,
+    pub groups: Vec<GroupConfig>,
+    pub group_results: Vec<GroupResult>,
+    pub elected: Vec<Elected>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ElectionResult {
-    StvMd {
-        election: Election,
-        log: crate::log::CountingLog,
-        elected: Vec<Elected>,
-    },
-    StvMdCoperland {
-        election: Election,
-        log: crate::log::CountingLog,
-        elected: Vec<Elected>,
-        order: HashMap<String, usize>,
-        pairwise_matrix: Vec<Vec<usize>>,
-    },
-    StvMdGrouped {
-        election: Election,
-        groups: Vec<GroupConfig>,
-        group_results: Vec<GroupResult>,
-        elected: Vec<Elected>,
-    },
+    StvMd(StvMdResult),
+    StvMdCoperland(StvMdCoperlandResult),
+    StvMdGrouped(StvMdGroupedResult),
 }
 
 impl ElectionResult {
     pub fn election(&self) -> &Election {
         match self {
-            ElectionResult::StvMd { election, .. } => election,
-            ElectionResult::StvMdCoperland { election, .. } => election,
-            ElectionResult::StvMdGrouped { election, .. } => election,
+            ElectionResult::StvMd(r) => &r.election,
+            ElectionResult::StvMdCoperland(r) => &r.election,
+            ElectionResult::StvMdGrouped(r) => &r.election,
         }
     }
 
     pub fn elected(&self) -> &[Elected] {
         match self {
-            ElectionResult::StvMd { elected, .. } => elected,
-            ElectionResult::StvMdCoperland { elected, .. } => elected,
-            ElectionResult::StvMdGrouped { elected, .. } => elected,
+            ElectionResult::StvMd(r) => &r.elected,
+            ElectionResult::StvMdCoperland(r) => &r.elected,
+            ElectionResult::StvMdGrouped(r) => &r.elected,
         }
     }
-
-    pub fn log(&self) -> &crate::log::CountingLog {
-        match self {
-            ElectionResult::StvMd { log, .. } => log,
-            ElectionResult::StvMdCoperland { log, .. } => log,
-            ElectionResult::StvMdGrouped { .. } => {
-                panic!("log() is not supported for grouped results; use group_results() instead")
-            }
-        }
-    }
-
 }
 
 pub fn count(election: Election) -> Result<ElectionResult, String> {
-    match election.election_type() {
-        ElectionType::StvMd => stv_md::count(election),
-        ElectionType::StvMdCoperland => stv_md_coperland::count(election),
-        ElectionType::StvMdGrouped => stv_md_grouped::count(election),
+    match election {
+        Election::StvMd(e) => {
+            let (log, elected) = stv_md::count(&e)?;
+            Ok(ElectionResult::StvMd(StvMdResult {
+                election: Election::StvMd(e),
+                log,
+                elected,
+            }))
+        }
+        Election::StvMdCoperland(e) => {
+            let (log, elected, order, pairwise_matrix) = stv_md_coperland::count(&e)?;
+            Ok(ElectionResult::StvMdCoperland(StvMdCoperlandResult {
+                election: Election::StvMdCoperland(e),
+                log,
+                elected,
+                order,
+                pairwise_matrix,
+            }))
+        }
+        Election::StvMdGrouped(e) => {
+            let (group_results, elected) = stv_md_grouped::count(&e)?;
+            Ok(ElectionResult::StvMdGrouped(StvMdGroupedResult {
+                groups: e.groups().to_vec(),
+                election: Election::StvMdGrouped(e),
+                group_results,
+                elected,
+            }))
+        }
     }
 }
 
-pub fn to_election(
+pub fn to_election_with_config(
     candidates: Vec<String>,
     seats: usize,
-    election_type: ElectionType,
     ballots: Vec<Ballot>,
-) -> Election {
-    to_election_with_groups(candidates, seats, election_type, ballots, vec![], vec![])
-}
-
-pub fn to_election_with_groups(
-    candidates: Vec<String>,
-    seats: usize,
-    election_type: ElectionType,
-    ballots: Vec<Ballot>,
-    groups: Vec<GroupConfig>,
-    candidate_groups: Vec<String>,
-) -> Election {
+    config: &SystemConfig,
+) -> Result<Election, String> {
     let mut pattern_counts: HashMap<Vec<Option<usize>>, usize> = HashMap::new();
     for ballot in ballots {
         *pattern_counts.entry(ballot.ranks).or_insert(0) += 1;
@@ -227,23 +551,21 @@ pub fn to_election_with_groups(
 
     ballots.sort_by(|a, b| b.votes.cmp(&a.votes));
 
-    match election_type {
-        ElectionType::StvMd => Election::StvMd {
-            candidates,
-            seats,
-            ballots,
-        },
-        ElectionType::StvMdCoperland => Election::StvMdCoperland {
-            candidates,
-            seats,
-            ballots,
-        },
-        ElectionType::StvMdGrouped => Election::StvMdGrouped {
-            candidates,
-            seats,
-            ballots,
-            groups,
-            candidate_groups,
-        },
+    match config {
+        SystemConfig::StvMd {} => Ok(Election::StvMd(RankedElection::try_new(
+            candidates, seats, ballots,
+        )?)),
+        SystemConfig::StvMdCoperland {} => Ok(Election::StvMdCoperland(RankedElection::try_new(
+            candidates, seats, ballots,
+        )?)),
+        SystemConfig::StvMdGrouped(cfg) => Ok(Election::StvMdGrouped(
+            StvMdGroupedElection::try_new(
+                candidates,
+                seats,
+                ballots,
+                cfg.groups().to_vec(),
+                cfg.candidate_groups().to_vec(),
+            )?,
+        )),
     }
 }

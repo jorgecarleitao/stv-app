@@ -9,6 +9,9 @@ mod m20250716_000001_create_election_results;
 mod m20250719_000001_add_grouped_fields;
 mod m20250722_000001_add_email_config;
 mod m20250725_000001_remove_smtp_port;
+mod m20251118_000001_add_election_config;
+mod m20251118_000002_add_ballot_data;
+mod m20251118_000003_drop_elections_election_type;
 
 pub struct Migrator;
 
@@ -25,6 +28,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20250719_000001_add_grouped_fields::Migration),
             Box::new(m20250722_000001_add_email_config::Migration),
             Box::new(m20250725_000001_remove_smtp_port::Migration),
+            Box::new(m20251118_000001_add_election_config::Migration),
+            Box::new(m20251118_000002_add_ballot_data::Migration),
+            Box::new(m20251118_000003_drop_elections_election_type::Migration),
         ]
     }
 }

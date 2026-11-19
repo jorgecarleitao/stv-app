@@ -96,18 +96,6 @@ impl ElectionConfig {
             ElectionConfig::StvMdGrouped { ballots, .. } => ballots,
         }
     }
-    pub fn groups(&self) -> &[counting::GroupConfig] {
-        match self {
-            ElectionConfig::StvMdGrouped { groups, .. } => groups,
-            _ => &[],
-        }
-    }
-    pub fn candidate_groups(&self) -> &[String] {
-        match self {
-            ElectionConfig::StvMdGrouped { candidate_groups, .. } => candidate_groups,
-            _ => &[],
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -126,14 +114,6 @@ pub struct ElectionState {
     /// Election results (only available after election ends)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<counting::ElectionResult>,
-}
-
-pub fn parse_election_type(s: &str) -> counting::ElectionType {
-    match s {
-        "stv-md-coperland" => counting::ElectionType::StvMdCoperland,
-        "stv-md-grouped" => counting::ElectionType::StvMdGrouped,
-        _ => counting::ElectionType::StvMd,
-    }
 }
 
 #[utoipa::path(
@@ -202,11 +182,7 @@ async fn get_election(
 
     let ballots: Vec<counting::Ballot> = all_ballots
         .iter()
-        .filter_map(|b| {
-            b.ranks.as_ref().map(|ranks| counting::Ballot {
-                ranks: ranks.0.clone(),
-            })
-        })
+        .filter_map(|b| b.data.clone().map(|data| data.into_ballot()))
         .collect();
 
     let casted = ballots.len();
@@ -214,7 +190,6 @@ async fn get_election(
     // Only publish results after the election has ended
     let now = Utc::now();
     let has_ended = now >= election.end_time;
-    let election_type = parse_election_type(&election.election_type);
 
     let results = if has_ended && casted > 0 {
         Some(
@@ -223,10 +198,8 @@ async fn get_election(
                 &election_uuid,
                 election.candidates.0.clone(),
                 election.num_seats,
-                election_type,
                 ballots,
-                election.groups.0.clone(),
-                election.candidate_groups.0.clone(),
+                &election.config,
             )
             .await?,
         )
@@ -240,25 +213,25 @@ async fn get_election(
     } else {
         None
     };
-    let election_config = match election_type {
-        counting::ElectionType::StvMd => ElectionConfig::StvMd {
+    let election_config = match &election.config {
+        counting::SystemConfig::StvMd {} => ElectionConfig::StvMd {
             id: election.uuid, title: election.title, description: election.description,
             candidates: election.candidates.0.clone(), seats: election.num_seats,
             start_time: election.start_time, end_time: election.end_time,
             number_of_ballots: potential_voters, ballots: ballots_opt,
         },
-        counting::ElectionType::StvMdCoperland => ElectionConfig::StvMdCoperland {
+        counting::SystemConfig::StvMdCoperland {} => ElectionConfig::StvMdCoperland {
             id: election.uuid, title: election.title, description: election.description,
             candidates: election.candidates.0.clone(), seats: election.num_seats,
             start_time: election.start_time, end_time: election.end_time,
             number_of_ballots: potential_voters, ballots: ballots_opt,
         },
-        counting::ElectionType::StvMdGrouped => ElectionConfig::StvMdGrouped {
+        counting::SystemConfig::StvMdGrouped(cfg) => ElectionConfig::StvMdGrouped {
             id: election.uuid, title: election.title, description: election.description,
             candidates: election.candidates.0.clone(), seats: election.num_seats,
             start_time: election.start_time, end_time: election.end_time,
             number_of_ballots: potential_voters, ballots: ballots_opt,
-            groups: election.groups.0.clone(), candidate_groups: election.candidate_groups.0.clone(),
+            groups: cfg.groups().to_vec(), candidate_groups: cfg.candidate_groups().to_vec(),
         },
     };
 
@@ -283,30 +256,12 @@ async fn get_election(
 )]
 #[axum::debug_handler]
 async fn simulate(
-    Json(election): Json<counting::Election>,
+    payload: Result<Json<counting::Election>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<counting::ElectionResult>, error::Error> {
-    if election.candidates().is_empty() {
-        return Err(error::Error::BadRequest(
-            "Candidates list cannot be empty".to_string(),
-        ));
-    }
-    if election.seats() == 0 || election.seats() > election.candidates().len() {
-        return Err(error::Error::BadRequest(
-            "Invalid number of seats".to_string(),
-        ));
-    }
-    for ballot in election.ballots() {
-        for &rank in &ballot.ranks {
-            if let Some(idx) = rank {
-                if idx >= election.candidates().len() {
-                    return Err(error::Error::BadRequest(
-                        "Invalid candidate index".to_string(),
-                    ));
-                }
-            }
-        }
-    }
-
+    // Deserialization goes through try_new, so invalid election data is
+    // rejected here at parse time with a 400.
+    let Json(election) =
+        payload.map_err(|e| error::Error::BadRequest(format!("Invalid election data: {}", e)))?;
     counting::count(election.clone())
         .map_err(error::Error::BadRequest)
         .map(Json)
@@ -340,10 +295,8 @@ pub(crate) async fn get_or_compute_result(
     election_uuid: &str,
     candidates: Vec<String>,
     num_seats: u32,
-    election_type: counting::ElectionType,
     ballots: Vec<counting::Ballot>,
-    groups: Vec<counting::GroupConfig>,
-    candidate_groups: Vec<String>,
+    config: &counting::SystemConfig,
 ) -> Result<counting::ElectionResult, error::Error> {
     use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 
@@ -366,14 +319,13 @@ pub(crate) async fn get_or_compute_result(
         });
     }
 
-    let election = counting::to_election_with_groups(
+    let election = counting::to_election_with_config(
         candidates,
         num_seats as usize,
-        election_type,
         ballots,
-        groups,
-        candidate_groups,
-    );
+        config,
+    )
+    .map_err(|e| error::Error::Internal(format!("Invalid election data for {}: {}", election_uuid, e)))?;
     let result = counting::count(election).map_err(|e| {
         error::Error::Internal(format!(
             "Counting failed for {}: {:?}",
@@ -433,8 +385,11 @@ pub(crate) async fn get_or_compute_result(
                 ElectionConfig,
                 ElectionState,
                 counting::ElectionType,
+                counting::SystemConfig,
                 counting::Ballot,
                 counting::CombinedBallot,
+                counting::RankedBallot,
+                counting::CastBallotRequest,
                 counting::Election,
                 counting::ElectionResult,
                 counting::Elected,

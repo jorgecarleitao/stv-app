@@ -1,6 +1,6 @@
-use super::{Elected, Election, ElectionResult, stv};
+use super::{Elected, RankedElection, stv};
 
-pub fn count(election: Election) -> Result<ElectionResult, String> {
+pub fn count(election: &RankedElection) -> Result<(crate::log::CountingLog, Vec<Elected>), String> {
     let outcome = stv::run(election.candidates(), election.seats(), election.ballots());
 
     let elected = outcome
@@ -12,9 +12,5 @@ pub fn count(election: Election) -> Result<ElectionResult, String> {
         })
         .collect();
 
-    Ok(ElectionResult::StvMd {
-        election,
-        log: outcome.log,
-        elected,
-    })
+    Ok((outcome.log, elected))
 }

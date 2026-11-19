@@ -1,43 +1,34 @@
-use super::{CombinedBallot, Elected, Election, ElectionResult, GroupResult, stv};
+use super::{CombinedBallot, Elected, Election, GroupResult, RankedElection, StvMdGroupedElection, stv};
 
-pub fn count(election: Election) -> Result<ElectionResult, String> {
-    let groups = election.groups().to_vec();
-    let seats = election.seats();
-
-    let total_group_seats: u32 = groups.iter().map(|g| g.seats).sum();
-    if total_group_seats as usize != seats {
-        return Err(format!(
-            "Sum of group seats ({}) must equal total seats ({})",
-            total_group_seats, seats
-        ));
-    }
+/// Count a grouped election. The `StvMdGroupedElection` type guarantees the
+/// grouped invariants (validated at construction), so no runtime checks are
+/// needed here.
+pub fn count(election: &StvMdGroupedElection) -> Result<(Vec<GroupResult>, Vec<Elected>), String> {
+    let candidates = election.candidates();
+    let ballots = election.ballots();
+    let groups = election.groups();
+    let candidate_groups = election.candidate_groups();
 
     let mut group_results = Vec::new();
     let mut all_elected = Vec::new();
 
-    for group in &groups {
-        let group_name = &group.name;
-        let group_seats = group.seats as usize;
+    for group in groups {
+        let group_name = group.name();
+        let group_seats = group.seats() as usize;
 
-        let group_indices: Vec<usize> = election
-            .candidate_groups()
+        let group_indices: Vec<usize> = candidate_groups
             .iter()
             .enumerate()
             .filter(|(_, g)| *g == group_name)
             .map(|(i, _)| i)
             .collect();
 
-        if group_indices.is_empty() {
-            return Err(format!("No candidates assigned to group '{}'", group_name));
-        }
-
         let group_candidates: Vec<String> = group_indices
             .iter()
-            .map(|&i| election.candidates()[i].clone())
+            .map(|&i| candidates[i].clone())
             .collect();
 
-        let group_ballots: Vec<CombinedBallot> = election
-            .ballots()
+        let group_ballots: Vec<CombinedBallot> = ballots
             .iter()
             .map(|b| {
                 let local_ranks: Vec<(usize, Option<usize>)> = group_indices
@@ -72,11 +63,13 @@ pub fn count(election: Election) -> Result<ElectionResult, String> {
             })
             .collect();
 
-        let group_election = Election::StvMd {
+        // Sub-election for this group. Built directly (not via `new`): the
+        // parent election's validation already guarantees well-formed data.
+        let group_election = Election::StvMd(RankedElection {
             candidates: group_candidates.clone(),
             seats: group_seats,
             ballots: group_ballots.clone(),
-        };
+        });
 
         let outcome = stv::run(&group_candidates, group_seats, &group_ballots);
 
@@ -86,14 +79,14 @@ pub fn count(election: Election) -> Result<ElectionResult, String> {
             .map(|&e| {
                 let original_id = group_indices[e];
                 Elected {
-                    candidate: election.candidates()[original_id].clone(),
+                    candidate: candidates[original_id].clone(),
                     id: original_id,
                 }
             })
             .collect();
 
         let group_result = GroupResult {
-            group: group_name.clone(),
+            group: group_name.to_string(),
             seats: group_seats,
             election: group_election,
             log: outcome.log,
@@ -104,10 +97,5 @@ pub fn count(election: Election) -> Result<ElectionResult, String> {
         group_results.push(group_result);
     }
 
-    Ok(ElectionResult::StvMdGrouped {
-        election,
-        groups,
-        group_results,
-        elected: all_elected,
-    })
+    Ok((group_results, all_elected))
 }

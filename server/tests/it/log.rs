@@ -1,5 +1,5 @@
 use regex::Regex;
-use server::counting::{self, CombinedBallot, Election};
+use server::counting::{self, CombinedBallot, Election, RankedElection};
 use server::log::{CountingLogAction, CountingLogActionType, CountingLog};
 
 fn run_election(
@@ -7,15 +7,22 @@ fn run_election(
     seats: usize,
     ballots: Vec<(usize, Vec<Option<usize>>)>,
 ) -> CountingLog {
-    let election = Election::StvMd {
-        candidates: candidates.into_iter().map(String::from).collect(),
-        seats,
-        ballots: ballots
-            .into_iter()
-            .map(|(votes, ranks)| CombinedBallot { votes, ranks })
-            .collect(),
-    };
-    counting::count(election).unwrap().log().clone()
+    let election = Election::StvMd(
+        RankedElection::try_new(
+            candidates.into_iter().map(String::from).collect(),
+            seats,
+            ballots
+                .into_iter()
+                .map(|(votes, ranks)| CombinedBallot { votes, ranks })
+                .collect(),
+        )
+        .unwrap(),
+    );
+    match counting::count(election).unwrap() {
+        counting::ElectionResult::StvMd(r) => r.log,
+        counting::ElectionResult::StvMdCoperland(_) => panic!("expected an stv-md result"),
+        counting::ElectionResult::StvMdGrouped(_) => panic!("expected a non-grouped result"),
+    }
 }
 
 fn all_actions(log: &CountingLog) -> Vec<&CountingLogAction> {

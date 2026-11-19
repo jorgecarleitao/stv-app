@@ -117,7 +117,7 @@ async fn test_election_workflow() -> Result<(), String> {
                 "/api/elections/{}/ballot/{}",
                 election_id, ballot_id
             ))
-            .json(&json!({ "ranks": [0, 1] }))
+            .json(&json!({ "election_type": "stv-md-coperland", "ranks": [0, 1] }))
             .await;
         assert_eq!(vote_resp.status_code(), 200, "Failed to cast ballot {}", i);
     }
@@ -147,7 +147,7 @@ async fn test_election_workflow() -> Result<(), String> {
                 "/api/elections/{}/ballot/{}",
                 election_id, ballot_id
             ))
-            .json(&json!({ "ranks": [1, 0] }))
+            .json(&json!({ "election_type": "stv-md-coperland", "ranks": [1, 0] }))
             .await;
         assert_eq!(vote_resp.status_code(), 200, "Failed to cast ballot {}", i);
     }
@@ -202,13 +202,74 @@ async fn test_election_workflow() -> Result<(), String> {
             "/api/elections/{}/ballot/{}",
             election_id, first_ballot_id
         ))
-        .json(&json!({ "ranks": [1, 0] }))
+        .json(&json!({ "election_type": "stv-md-coperland", "ranks": [1, 0] }))
         .await;
     assert_eq!(
         vote_after_close.status_code(),
         400,
         "Should not be able to cast votes after election ends"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ballot_type_tag_must_match_election() -> Result<(), String> {
+    let db = setup_db().await?;
+    let app = create_app(db).map_err(|e| e.to_string())?;
+    let server = TestServer::builder().mock_transport().build(app);
+
+    let create_resp = server
+        .post("/api/elections")
+        .json(&json!({
+            "title": "Tag Mismatch Test",
+            "candidates": ["Alice", "Bob"],
+            "num_seats": 1,
+            "election_type": "stv-md",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2099-12-31T23:59:59Z"
+        }))
+        .await;
+    assert_eq!(create_resp.status_code(), 200);
+    let election = create_resp.json::<serde_json::Value>();
+    let election_id = election["uuid"].as_str().unwrap().to_string();
+    let admin_uuid = election["admin_uuid"].as_str().unwrap().to_string();
+
+    let tokens_resp = server
+        .post(&format!("/api/elections/{}/admin/{}/tokens", election_id, admin_uuid))
+        .json(&json!({"count": 1}))
+        .await;
+    assert_eq!(tokens_resp.status_code(), 200);
+    let token_id = tokens_resp.json::<Vec<serde_json::Value>>()[0]["id"].as_str().unwrap().to_string();
+
+    let redeem_resp = server
+        .post(&format!("/api/elections/{}/tokens/{}/redeem", election_id, token_id))
+        .await;
+    assert_eq!(redeem_resp.status_code(), 200);
+    let ballot_id = redeem_resp.json::<String>();
+
+    // Wrong tag: stv-md-grouped ballot on an stv-md election -> 400
+    let wrong = server
+        .put(&format!("/api/elections/{}/ballot/{}", election_id, ballot_id))
+        .json(&json!({ "election_type": "stv-md-grouped", "ranks": [0, 1] }))
+        .await;
+    assert_eq!(wrong.status_code(), 400, "mismatched ballot tag should be rejected");
+
+    // Correct tag -> 200
+    let ok = server
+        .put(&format!("/api/elections/{}/ballot/{}", election_id, ballot_id))
+        .json(&json!({ "election_type": "stv-md", "ranks": [0, 1] }))
+        .await;
+    assert_eq!(ok.status_code(), 200, "matching ballot tag should be accepted");
+
+    // GET ballot returns the tagged payload
+    let get_resp = server
+        .get(&format!("/api/elections/{}/ballot/{}", election_id, ballot_id))
+        .await;
+    assert_eq!(get_resp.status_code(), 200);
+    let ballot = get_resp.json::<serde_json::Value>();
+    assert_eq!(ballot["data"]["election_type"], "stv-md");
+    assert_eq!(ballot["data"]["ranks"], json!([0, 1]));
 
     Ok(())
 }

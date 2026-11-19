@@ -9,7 +9,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::{CreateElectionRequest, ElectionResponse, Elections, entity};
-use crate::{AppState, counting::ElectionType, error::Error};
+use crate::{AppState, counting, counting::SystemConfig, error::Error};
 
 /// Check if an election is locked (has any redeemed tokens)
 async fn is_election_locked<C>(db: &C, election_id: &str) -> Result<bool, Error>
@@ -43,25 +43,7 @@ where
         .ok_or(Error::NotFound)
 }
 
-fn election_type_to_string(t: ElectionType) -> String {
-    match t {
-        ElectionType::StvMd => "stv-md".to_string(),
-        ElectionType::StvMdCoperland => "stv-md-coperland".to_string(),
-        ElectionType::StvMdGrouped => "stv-md-grouped".to_string(),
-    }
-}
-
-fn parse_election_type(s: &str) -> Result<ElectionType, Error> {
-    match s {
-        "stv-md" => Ok(ElectionType::StvMd),
-        "stv-md-coperland" => Ok(ElectionType::StvMdCoperland),
-        "stv-md-grouped" => Ok(ElectionType::StvMdGrouped),
-        _ => Err(Error::Internal(format!("Invalid election_type '{}'", s))),
-    }
-}
-
 fn build_election_response(model: entity::Model, is_locked: bool) -> Result<ElectionResponse, Error> {
-    let election_type = parse_election_type(&model.election_type)?;
     let common = |uuid, admin_uuid, title, description, candidates, num_seats, start_time, end_time| {
         (uuid, admin_uuid, title, description, candidates, num_seats, start_time, end_time)
     };
@@ -70,25 +52,25 @@ fn build_election_response(model: entity::Model, is_locked: bool) -> Result<Elec
         model.candidates.0, model.num_seats, model.start_time.into(), model.end_time.into(),
     );
 
-    match election_type {
-        ElectionType::StvMd => Ok(ElectionResponse::StvMd {
+    match &model.config {
+        SystemConfig::StvMd {} => Ok(ElectionResponse::StvMd {
             uuid, admin_uuid, title, description, candidates, num_seats,
             start_time, end_time, is_locked,
         }),
-        ElectionType::StvMdCoperland => Ok(ElectionResponse::StvMdCoperland {
+        SystemConfig::StvMdCoperland {} => Ok(ElectionResponse::StvMdCoperland {
             uuid, admin_uuid, title, description, candidates, num_seats,
             start_time, end_time, is_locked,
         }),
-        ElectionType::StvMdGrouped => Ok(ElectionResponse::StvMdGrouped {
+        SystemConfig::StvMdGrouped(cfg) => Ok(ElectionResponse::StvMdGrouped {
             uuid, admin_uuid, title, description, candidates, num_seats,
             start_time, end_time, is_locked,
-            groups: model.groups.0,
-            candidate_groups: model.candidate_groups.0,
+            groups: cfg.groups().to_vec(),
+            candidate_groups: cfg.candidate_groups().to_vec(),
         }),
     }
 }
 
-fn model_from_request(req: &CreateElectionRequest, uuid: String, admin_uuid: String) -> entity::ActiveModel {
+fn model_from_request(req: &CreateElectionRequest, config: SystemConfig, uuid: String, admin_uuid: String) -> entity::ActiveModel {
     entity::ActiveModel {
         uuid: Set(uuid),
         admin_uuid: Set(admin_uuid),
@@ -96,11 +78,9 @@ fn model_from_request(req: &CreateElectionRequest, uuid: String, admin_uuid: Str
         description: Set(req.description().clone()),
         candidates: Set(entity::Candidates(req.candidates().to_vec())),
         num_seats: Set(req.num_seats()),
-        election_type: Set(election_type_to_string(req.election_type())),
         start_time: Set(*req.start_time()),
         end_time: Set(*req.end_time()),
-        groups: Set(entity::Groups(req.groups().to_vec())),
-        candidate_groups: Set(entity::CandidateGroups(req.candidate_groups().to_vec())),
+        config: Set(config),
     }
 }
 
@@ -117,12 +97,28 @@ fn model_from_request(req: &CreateElectionRequest, uuid: String, admin_uuid: Str
 #[axum::debug_handler]
 pub async fn create_election(
     State(state): State<AppState>,
-    Json(req): Json<CreateElectionRequest>,
+    payload: Result<Json<CreateElectionRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<ElectionResponse>, Error> {
+    // Deserialization goes through try_new, so invalid data is rejected here
+    // at parse time with a 400.
+    let Json(req) =
+        payload.map_err(|e| Error::BadRequest(format!("Invalid election data: {}", e)))?;
+
+    let config = req.system_config().map_err(Error::BadRequest)?;
+
+    // Validate the cross-field invariants (e.g. group seats vs total seats)
+    counting::to_election_with_config(
+        req.candidates().to_vec(),
+        req.num_seats() as usize,
+        vec![],
+        &config,
+    )
+    .map_err(Error::BadRequest)?;
+
     let uuid = Uuid::new_v4().to_string();
     let admin_uuid = Uuid::new_v4().to_string();
 
-    let election = model_from_request(&req, uuid, admin_uuid);
+    let election = model_from_request(&req, config, uuid, admin_uuid);
 
     let inserted = election
         .insert(&state.db)
@@ -180,8 +176,11 @@ pub async fn get_election_by_admin(
 pub async fn update_election_by_admin(
     State(state): State<AppState>,
     Path((election_id, admin_uuid)): Path<(String, String)>,
-    Json(req): Json<CreateElectionRequest>,
+    payload: Result<Json<CreateElectionRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<ElectionResponse>, Error> {
+    let Json(req) =
+        payload.map_err(|e| Error::BadRequest(format!("Invalid election data: {}", e)))?;
+
     let txn = state
         .db
         .begin()
@@ -190,16 +189,28 @@ pub async fn update_election_by_admin(
 
     let election = find_election_by_admin(&txn, &election_id, &admin_uuid).await?;
 
-    // Check if title, description, or candidates are being modified
+    let new_config = req.system_config().map_err(Error::BadRequest)?;
+
+    // Validate the cross-field invariants (e.g. group seats vs total seats)
+    counting::to_election_with_config(
+        req.candidates().to_vec(),
+        req.num_seats() as usize,
+        vec![],
+        &new_config,
+    )
+    .map_err(Error::BadRequest)?;
+
+    // Check if title, description, candidates, or system config are being modified
     let title_changed = election.title != req.title();
     let description_changed = election.description != req.description().clone();
     let candidates_changed = election.candidates.0 != req.candidates();
+    let config_changed = election.config != new_config;
 
     let is_locked = is_election_locked(&txn, &election_id).await?;
 
-    if (title_changed || description_changed || candidates_changed) && is_locked {
+    if (title_changed || description_changed || candidates_changed || config_changed) && is_locked {
         return Err(Error::BadRequest(
-            "Cannot modify election title, description, or candidates after ballots have been issued. Tokens have already been redeemed.".to_string()
+            "Cannot modify election title, description, candidates, or configuration after ballots have been issued. Tokens have already been redeemed.".to_string()
         ));
     }
 
@@ -208,11 +219,9 @@ pub async fn update_election_by_admin(
     election_active.description = Set(req.description().clone());
     election_active.candidates = Set(entity::Candidates(req.candidates().to_vec()));
     election_active.num_seats = Set(req.num_seats());
-    election_active.election_type = Set(election_type_to_string(req.election_type()));
     election_active.start_time = Set(*req.start_time());
     election_active.end_time = Set(*req.end_time());
-    election_active.groups = Set(entity::Groups(req.groups().to_vec()));
-    election_active.candidate_groups = Set(entity::CandidateGroups(req.candidate_groups().to_vec()));
+    election_active.config = Set(new_config);
 
     let updated = election_active
         .update(&txn)

@@ -483,7 +483,7 @@ pub async fn redeem_token(
                 let ballot = crate::ballots::entity::ActiveModel {
                     election_id: Set(ballot_token.election_id.clone()),
                     id: Set(ballot_id.clone()),
-                    ranks: Set(None),
+                    data: Set(None),
                 };
 
                 ballot.insert(txn).await?;

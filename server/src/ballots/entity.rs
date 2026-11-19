@@ -1,11 +1,8 @@
-use sea_orm::FromJsonQueryResult;
 use sea_orm::prelude::*;
 
 use serde::{Deserialize, Serialize};
 
-/// Represents ballot ranks as Vec<Option<usize>>
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult)]
-pub struct Ranks(pub Vec<Option<usize>>);
+use crate::counting::CastBallotRequest;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "ballots")]
@@ -14,9 +11,9 @@ pub struct Model {
     pub election_id: String,
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: String,
-    // None: abstentained - the ballot was redeemed but never casted
-    // Some(vec![]): empty ballot - the voter casted but did not rank any candidates
-    pub ranks: Option<Ranks>,
+    // None: abstained - the ballot was redeemed but never cast
+    // Some: the ballot was cast; payload is tagged by the election's `election_type`
+    pub data: Option<CastBallotRequest>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

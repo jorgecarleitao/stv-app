@@ -5,7 +5,7 @@ use axum::{
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
-use super::{Ballots, Ranks, entity};
+use super::{Ballots, entity};
 use crate::{AppState, counting, elections, error::Error};
 
 #[utoipa::path(
@@ -76,7 +76,7 @@ pub async fn get_ballot(
         ("election_id" = String, Path, description = "Election UUID"),
         ("uuid" = String, Path, description = "Ballot UUID")
     ),
-    request_body = counting::Ballot,
+    request_body = counting::CastBallotRequest,
     responses(
         (status = 200, description = "Ballot updated successfully"),
         (status = 400, description = "Invalid ballot data or voting period constraints"),
@@ -89,9 +89,13 @@ pub async fn get_ballot(
 pub async fn put_ballot(
     Path((election_id, uuid)): Path<(String, String)>,
     State(state): State<AppState>,
-    Json(ballot): Json<counting::Ballot>,
+    payload: Result<Json<counting::CastBallotRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<serde_json::Value>, Error> {
     use sea_orm::{DbErr, TransactionTrait};
+
+    // Deserialization is parse-time validated; reject invalid payloads with 400
+    let Json(ballot) =
+        payload.map_err(|e| Error::BadRequest(format!("Invalid ballot data: {}", e)))?;
 
     state
         .db
@@ -103,6 +107,17 @@ pub async fn put_ballot(
                     .await?
                     .ok_or(DbErr::RecordNotFound("Election not found".to_string()))?;
 
+                let election_type = election.config.election_type();
+
+                // The ballot payload's tag must match the election's type
+                if ballot.election_type() != election_type {
+                    return Err(DbErr::Custom(format!(
+                        "Ballot election_type '{}' does not match election type '{}'",
+                        ballot.election_type().as_str(),
+                        election_type.as_str()
+                    )));
+                }
+
                 // Verify the ballot belongs to this election
                 let ballot_record = Ballots::find()
                     .filter(entity::Column::ElectionId.eq(&election_id))
@@ -111,14 +126,19 @@ pub async fn put_ballot(
                     .await?
                     .ok_or(DbErr::RecordNotFound("Ballot not found".to_string()))?;
 
-                // Validate ranks
-                if ballot
-                    .ranks
-                    .iter()
-                    .filter_map(|&c| c)
-                    .any(|c| c >= election.candidates.0.len())
-                {
-                    return Err(DbErr::Custom("Invalid candidate index".to_string()));
+                // Validate the ballot payload per election-system variant
+                match &ballot {
+                    counting::CastBallotRequest::StvMd(b)
+                    | counting::CastBallotRequest::StvMdCoperland(b)
+                    | counting::CastBallotRequest::StvMdGrouped(b) => {
+                        if b.ranks
+                            .iter()
+                            .filter_map(|&c| c)
+                            .any(|c| c >= election.candidates.0.len())
+                        {
+                            return Err(DbErr::Custom("Invalid candidate index".to_string()));
+                        }
+                    }
                 }
 
                 // Enforce voting period
@@ -132,7 +152,7 @@ pub async fn put_ballot(
 
                 // Update ballot (ballot must already exist, created via token conversion)
                 let mut active: entity::ActiveModel = ballot_record.into();
-                active.ranks = Set(Some(Ranks(ballot.ranks)));
+                active.data = Set(Some(ballot));
                 active.update(txn).await?;
 
                 Ok(())

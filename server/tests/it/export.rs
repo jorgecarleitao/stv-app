@@ -90,7 +90,7 @@ async fn test_export_closed_election() -> Result<(), String> {
         let ranks = if i < 10 { json!([0, 1]) } else { json!([1, 0]) };
         let vote = server
             .put(&format!("/api/elections/{}/ballot/{}", eid, bid))
-            .json(&json!({ "ranks": ranks }))
+            .json(&json!({ "election_type": "stv-md-coperland", "ranks": ranks }))
             .await;
         assert_eq!(vote.status_code(), 200);
     }
@@ -149,7 +149,7 @@ async fn test_export_closed_election() -> Result<(), String> {
     assert_eq!(ballots_data.len(), 19);
     for b in &ballots_data {
         assert!(b["id"].is_string());
-        assert!(b["ranks"].is_array());
+        assert!(b["data"]["ranks"].is_array());
     }
 
     let results_json = read_zip_entry(&mut archive, "results.json");
@@ -253,7 +253,7 @@ async fn test_export_abstentions() -> Result<(), String> {
     let bid = redeem.json::<String>();
     let vote = server
         .put(&format!("/api/elections/{}/ballot/{}", eid, bid))
-        .json(&json!({ "ranks": [0, 1] }))
+        .json(&json!({ "election_type": "stv-md", "ranks": [0, 1] }))
         .await;
     assert_eq!(vote.status_code(), 200);
 
@@ -296,11 +296,11 @@ async fn test_export_abstentions() -> Result<(), String> {
 
     assert_eq!(ballots_data.len(), 2);
 
-    assert!(ballots_data[0]["ranks"].is_array());
-    assert_eq!(ballots_data[0]["ranks"][0], 0);
-    assert_eq!(ballots_data[0]["ranks"][1], 1);
+    assert!(ballots_data[0]["data"]["ranks"].is_array());
+    assert_eq!(ballots_data[0]["data"]["ranks"][0], 0);
+    assert_eq!(ballots_data[0]["data"]["ranks"][1], 1);
 
-    assert!(ballots_data[1]["ranks"].is_null());
+    assert!(ballots_data[1]["data"].is_null());
 
     Ok(())
 }
